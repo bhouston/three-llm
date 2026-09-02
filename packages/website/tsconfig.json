@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": ["**/*.ts", "**/*.tsx"],
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": ".",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "three-llm": ["../three-llm/src/index.ts"],
+      "three-llm/catalog": ["../three-llm/src/catalog.ts"]
+    }
+  },
+  "references": [{ "path": "../three-llm" }]
+}

@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": []
+}

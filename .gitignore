@@ -1,0 +1,29 @@
+node_modules
+dist
+publish
+.turbo
+coverage
+*.lcov
+profile-output
+tsconfig.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+*.buildinfo
+.idea
+.vscode
+# Demo / Nitro
+.output
+.nitro
+.tanstack
+# Playwright / E2E
+test-results
+playwright-report
+playwright/.cache
+blob-report
+**/e2e/__screenshots__
+.pnpm-store
+# Temporary local checkpoints copied into the demo for offline testing
+packages/website/public/models/llm/**

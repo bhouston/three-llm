@@ -1,0 +1,45 @@
+{
+  "name": "three-llm-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "husky",
+    "build": "pnpm -r build",
+    "tsc": "tsc -b",
+    "dev": "pnpm --parallel --filter three-llm --filter website dev",
+    "start": "pnpm --filter website start",
+    "test": "pnpm test:unit",
+    "test:unit": "pnpm tsc && vitest run --project library",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:all": "pnpm test && pnpm test:e2e",
+    "format": "oxfmt .",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "make-release": "node scripts/make-release.mjs packages/three-llm"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^22.20.0",
+    "@vitest/browser-playwright": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.10",
+    "husky": "^9.1.7",
+    "jsdom": "^25.0.0",
+    "lint-staged": "^17.3.0",
+    "oxfmt": "^0.58.0",
+    "oxlint": "^1.73.0",
+    "playwright": "^1.61.1",
+    "typescript": "^7",
+    "vite": "^8.1.3",
+    "vitest": "^4.1.10"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx,mjs,cjs}": ["oxfmt", "oxlint --fix"],
+    "*.{json,jsonc,md,mdx,css,html,yml,yaml}": "oxfmt"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@11.1.3"
+}

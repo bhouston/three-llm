@@ -1,0 +1,58 @@
+{
+  "name": "three-llm",
+  "version": "0.1.0",
+  "description": "Browser LLM inference on WebGPU using Three.js TSL compute shaders.",
+  "keywords": [
+    "llm",
+    "webgpu",
+    "three.js",
+    "tsl",
+    "gpt2",
+    "qwen",
+    "smollm",
+    "phi",
+    "inference",
+    "typescript"
+  ],
+  "homepage": "https://github.com/bhouston/three-llm",
+  "bugs": {
+    "url": "https://github.com/bhouston/three-llm/issues"
+  },
+  "license": "MIT",
+  "author": "Ben Houston (https://ben3d.ca)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bhouston/three-llm.git",
+    "directory": "packages/three-llm"
+  },
+  "files": ["dist"],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "default": "./dist/catalog.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w --preserveWatchOutput --noEmitOnError",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.0",
+    "three": "^0.185.0"
+  },
+  "peerDependencies": {
+    "three": ">=0.185.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
