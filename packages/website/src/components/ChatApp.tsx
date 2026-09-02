@@ -31,8 +31,14 @@ type TslRunner = {
 
 type ChatTurn = { role: 'user' | 'assistant'; text: string };
 
+const DEFAULT_MAX_NEW_TOKENS = 1024;
+
 function selectedModel(modelId: string | undefined): ModelCatalogEntry {
   return MODEL_CATALOG.find((entry) => entry.id === modelId) ?? MODEL_CATALOG[0]!;
+}
+
+function defaultMaxNewTokens(contextLimit: number): number {
+  return Math.max(1, Math.min(DEFAULT_MAX_NEW_TOKENS, contextLimit - 1));
 }
 
 function conversationPrompt(runner: TslRunner, turns: ChatTurn[], enableThinking: boolean) {
@@ -64,7 +70,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   const [draft, setDraft] = useState(model.prompt);
   const [assistantDraft, setAssistantDraft] = useState('');
   const [generating, setGenerating] = useState(false);
-  const [maxNewTokens, setMaxNewTokens] = useState(128);
+  const [maxNewTokens, setMaxNewTokens] = useState(DEFAULT_MAX_NEW_TOKENS);
+  const [contextLimit, setContextLimit] = useState(DEFAULT_MAX_NEW_TOKENS);
   const [temperature, setTemperature] = useState(0.7);
   const [topK, setTopK] = useState(10);
   const [repetitionPenalty, setRepetitionPenalty] = useState(1.1);
@@ -117,7 +124,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
         const modelURL = await resolveModelURL(model);
         const fromLocal = model.localUrl !== undefined && modelURL === model.localUrl;
-        setStatus(`Loading ${model.name} from ${fromLocal ? 'local public/models' : modelURL}…`);
+        setStatus(`Loading ${model.name} from ${fromLocal ? 'hosted models' : modelURL}…`);
 
         const runner = (await createTSLRunner(modelURL, {
           prefillChunkSize: 4,
@@ -134,8 +141,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
         runnerRef.current = runner;
         setArchitecture(runner.weights.architecture);
-        const maxTokens = Math.max(1, runner.maxTokens - 1);
-        setMaxNewTokens((value) => Math.min(value, maxTokens));
+        setContextLimit(runner.maxTokens);
+        setMaxNewTokens(defaultMaxNewTokens(runner.maxTokens));
         setReady(true);
         setStatus(`Ready. Context ${runner.maxTokens} tokens.`);
       } catch (loadError) {
@@ -272,10 +279,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
             <p className="text-muted-foreground text-sm">WebGPU LLM chat in the browser</p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" render={<a href="https://github.com/bhouston/three-llm" />}>
+            <Button variant="outline" nativeButton={false} render={<a href="https://github.com/bhouston/three-llm" />}>
               GitHub
             </Button>
-            <Button variant="outline" render={<a href="https://www.npmjs.com/package/three-llm" />}>
+            <Button variant="outline" nativeButton={false} render={<a href="https://www.npmjs.com/package/three-llm" />}>
               npm
             </Button>
           </div>
@@ -313,7 +320,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                       </SelectGroup>
                     </SelectContent>
                   </Select>
-                  <FieldDescription>Weights stream from Hugging Face on first load.</FieldDescription>
+                  <FieldDescription>Weights stream from the hosted model bucket on first load.</FieldDescription>
                 </Field>
                 <Button variant="outline" onClick={clearChat} disabled={!ready}>
                   <Trash2Icon data-icon="inline-start" />
@@ -328,7 +335,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                     id="tokens"
                     type="number"
                     min={1}
-                    max={2048}
+                    max={Math.max(1, contextLimit - 1)}
                     value={maxNewTokens}
                     onChange={(event) => setMaxNewTokens(Number(event.target.value) || 1)}
                   />

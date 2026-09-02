@@ -32,7 +32,7 @@ pnpm install
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The demo downloads the selected checkpoint from Hugging Face unless it finds a local copy under `packages/website/public/models/llm/`.
+Open [http://localhost:3000](http://localhost:3000). The demo loads checkpoints from `/api/models/`, which proxies the public `gs://three-llm` bucket, and falls back to Hugging Face if a file is missing.
 
 ## Library usage
 

@@ -10,14 +10,15 @@
     "dev": "pnpm --parallel --filter three-llm --filter website dev",
     "start": "pnpm --filter website start",
     "test": "pnpm test:unit",
-    "test:unit": "pnpm tsc && vitest run --project library",
+    "test:unit": "pnpm tsc && vitest run",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:all": "pnpm test && pnpm test:e2e",
     "format": "oxfmt .",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
-    "make-release": "node scripts/make-release.mjs packages/three-llm"
+    "make-release": "node scripts/make-release.mjs packages/three-llm",
+    "gcloud": "gcloud auth application-default login && gcloud config set account \"neuralsoft@gmail.com\" && gcloud config set project bhouston-general-hosting && gcloud config set run/region us-central1"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

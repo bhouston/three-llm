@@ -18,7 +18,7 @@ import {
 import { bfloat16ToFloat32, convertAllTensors, float16ToFloat32, tensorToFloat32 } from './LLMTensors.js';
 import { MODEL_CATALOG } from './catalog.js';
 import { QwenWeights } from './QwenWeights.js';
-import { parseSafeTensors } from './SafeTensorsLoader.js';
+import { parseSafeTensors, resolveSafetensorFiles } from './SafeTensorsLoader.js';
 import { resolveTensor } from './TensorNameMap.js';
 import { UnigramTokenizer } from './UnigramTokenizer.js';
 import type { Tensor, TensorMap, Tokenizer } from './types.js';
@@ -87,12 +87,61 @@ describe('MODEL_CATALOG', () => {
     expect(ids.some((id) => id.includes('gemma'))).toBe(false);
     for (const entry of MODEL_CATALOG) {
       expect(entry.url).toMatch(/^https:\/\/huggingface\.co\//);
-      expect(entry.localUrl).toMatch(/^\/models\/llm\//);
+      expect(entry.localUrl).toMatch(/^\/api\/models\//);
     }
   });
 });
 
 describe('SafeTensorsLoader', () => {
+  it('uses a single-file checkpoint when model.safetensors exists', async () => {
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url.endsWith('model.safetensors') && init?.method === 'HEAD') {
+        return new Response(null, { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(resolveSafetensorFiles('https://example.test/gpt2/')).resolves.toEqual(['model.safetensors']);
+      expect(requested).toEqual(['HEAD https://example.test/gpt2/model.safetensors']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('reads the shard index when model.safetensors is absent', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('model.safetensors') && init?.method === 'HEAD') {
+        return new Response(null, { status: 404 });
+      }
+      if (url.endsWith('model.safetensors.index.json')) {
+        return Response.json({
+          weight_map: {
+            a: 'model.safetensors-1-of-2.safetensors',
+            b: 'model.safetensors-2-of-2.safetensors',
+            c: 'model.safetensors-1-of-2.safetensors',
+          },
+        });
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(resolveSafetensorFiles('https://example.test/phi-1.5/')).resolves.toEqual([
+        'model.safetensors-1-of-2.safetensors',
+        'model.safetensors-2-of-2.safetensors',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('parses F32 tensors', () => {
     const parsed = parseSafeTensors(createSafeTensorsFixture());
     expect(parsed.tensors.values?.shape).toEqual([2, 2]);

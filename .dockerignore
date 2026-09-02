@@ -1,0 +1,10 @@
+node_modules
+.git
+.github
+.output
+.nitro
+.tanstack
+coverage
+test-results
+playwright-report
+packages/website/public/models/llm

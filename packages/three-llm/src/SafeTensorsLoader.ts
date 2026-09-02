@@ -178,22 +178,21 @@ function parseSafeTensors( buffer: ArrayBuffer, options: LoaderOptions = {} ): {
 
 }
 
+async function resolveSafetensorFiles( root: string, options: LoaderOptions = {} ): Promise<string[]> {
+
+	const singleResponse = await fetch( `${ root }model.safetensors`, { method: 'HEAD' } );
+	if ( singleResponse.ok ) return [ 'model.safetensors' ];
+
+	const index = await fetchJSON<{ weight_map: Record<string, string> }>( `${ root }model.safetensors.index.json`, options.label || 'SafeTensorsLoader' );
+	return [ ...new Set( Object.values( index.weight_map ) ) ];
+
+}
+
 async function loadSafetensorsModel( root: string, options: LoaderOptions = {} ): Promise<TensorMap> {
 
 	const report = createProgress( options.label || 'SafeTensorsLoader', options.onProgress );
 	const loader = new SafeTensorsLoader();
-	let files = [ 'model.safetensors' ];
-
-	try {
-
-		const index = await fetchJSON<{ weight_map: Record<string, string> }>( `${ root }model.safetensors.index.json`, options.label || 'SafeTensorsLoader' );
-		files = [ ...new Set( Object.values( index.weight_map ) ) ];
-
-	} catch ( _error ) {
-
-		// Single-file checkpoints do not ship an index.
-
-	}
+	const files = await resolveSafetensorFiles( root, options );
 
 	const tensors: TensorMap = {};
 
@@ -209,4 +208,4 @@ async function loadSafetensorsModel( root: string, options: LoaderOptions = {} )
 
 }
 
-export { SafeTensorsLoader, loadSafetensorsModel, parseSafeTensors };
+export { SafeTensorsLoader, loadSafetensorsModel, parseSafeTensors, resolveSafetensorFiles };

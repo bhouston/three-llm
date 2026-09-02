@@ -22,6 +22,14 @@ export default defineConfig({
           },
         },
       },
+      {
+        test: {
+          name: 'website',
+          include: ['packages/website/src/**/*.test.ts'],
+          exclude: ['**/e2e/**'],
+          environment: 'node',
+        },
+      },
     ],
   },
   resolve: {
