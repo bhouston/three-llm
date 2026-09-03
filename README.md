@@ -7,22 +7,6 @@ Run large language models in the browser with WebGPU. `three-llm` implements tra
 
 **[Try the live demo](https://three-llm.ben3d.ca)** · **[Read the technical write-up](https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs)**
 
-The library loads Hugging Face model configs, tokenizers, and SafeTensors weights directly in the browser. This repository also includes a chat demo that exercises the full stack.
-
-## Try it
-
-The live demo at [three-llm.ben3d.ca](https://three-llm.ben3d.ca) runs five checkpoints in a multi-turn chat UI with streaming replies, model switching, and generation settings. For how the models are implemented and why the architecture choices matter, see [Running LLMs in the Browser with Three.js](https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs).
-
-| Model | Size | Notes |
-| --- | --- | --- |
-| TinyStories GPT-2 3M | 15 MB | Short children's stories |
-| GPT-2 124M | 548 MB | Classic dense GPT-2 |
-| SmolLM2 135M | 269 MB | Llama-style chat model (default) |
-| Qwen3.5 0.8B | 1.7 GB | Hybrid linear + full attention |
-| Phi-1.5 1.3B | 2.8 GB | Microsoft Phi architecture |
-
-On phones and other memory-constrained devices, stick with TinyStories or SmolLM2. Qwen and Phi need enough GPU memory that many mobile browsers will fail to load them.
-
 ## Features
 
 - WebGPU inference through Three.js TSL compute shaders
