@@ -5,7 +5,9 @@
 
 Run large language models in the browser with WebGPU. `three-llm` implements transformer inference with [Three.js](https://threejs.org/) and its TSL compute shader system, so model execution stays on the user's GPU without a server-side inference runtime.
 
-**[Try the live demo](https://three-llm.ben3d.ca)** · **[Read the technical write-up](https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs)**
+**[Try the live demo: threekit-llm.ben3d.ca](https://three-llm.ben3d.ca)** · **[Read the technical write-up](https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs)**
+
+<img src="three-llm-chat.webp" alt="Demo App Interface" width="500" />
 
 ## Features
 
