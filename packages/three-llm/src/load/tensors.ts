@@ -49,7 +49,7 @@ const _bf16Float = new Float32Array(_bf16Bits.buffer);
 const CONVERT_CHUNK_ELEMENTS = 1 << 20; // 1,048,576 values ≈ 2 MB of BF16
 const CONVERT_PROGRESS_INTERVAL_MS = 200;
 const STREAM_BUFFER_LIMIT = 256 * 1024 * 1024;
-const FETCH_RETRY_COUNT = 2;
+const FETCH_RETRY_COUNT = 4;
 const MODEL_CHUNK_BYTES = 24 * 1024 * 1024;
 const MODEL_CHUNK_CONCURRENCY = 3;
 
