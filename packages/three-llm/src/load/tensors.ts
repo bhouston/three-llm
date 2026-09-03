@@ -275,6 +275,25 @@ function createProgress( label: string, onProgress?: ProgressCallback ) {
 
 }
 
+function fileNameFromURL( url: string ): string {
+
+	const path = url.split( '?' )[ 0 ] ?? url;
+	const segments = path.split( '/' ).filter( ( segment ) => segment.length > 0 );
+	const fileName = segments[ segments.length - 1 ];
+	if ( fileName === undefined ) return url;
+
+	try {
+
+		return decodeURIComponent( fileName );
+
+	} catch {
+
+		return fileName;
+
+	}
+
+}
+
 async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: ProgressCallback ): Promise<ArrayBuffer> {
 
 	const response = await fetch( url );
@@ -285,14 +304,15 @@ async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: Progre
 
 	}
 
+	const fileName = fileNameFromURL( url );
 	const total = Number( response.headers.get( 'Content-Length' ) ) || 0;
 	const report = createProgress( label, onProgress );
 
 	if ( response.body === null || typeof response.body.getReader !== 'function' || total > STREAM_BUFFER_LIMIT ) {
 
-		await report( `Downloading ${ url }${ total ? ` (${ formatBytes( total ) })` : '' }...` );
+		await report( `Downloading ${ fileName }${ total ? ` (${ formatBytes( total ) })` : '' }...` );
 		const buffer = await response.arrayBuffer();
-		await report( `Downloaded ${ formatBytes( buffer.byteLength ) }` );
+		await report( `Downloaded ${ fileName } (${ formatBytes( buffer.byteLength ) })` );
 		return buffer;
 
 	}
@@ -302,7 +322,7 @@ async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: Progre
 	let received = 0;
 	let lastReport = 0;
 
-	await report( `Downloading ${ url }${ total ? ` (${ formatBytes( total ) })` : '' }...` );
+	await report( `Downloading ${ fileName }${ total ? ` (${ formatBytes( total ) })` : '' }...` );
 
 	while ( true ) {
 
@@ -316,7 +336,7 @@ async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: Progre
 
 			lastReport = received;
 			const totalText = total > 0 ? ` / ${ formatBytes( total ) }` : '';
-			await report( `Downloading weights ${ formatBytes( received ) }${ totalText }` );
+			await report( `Downloading ${ fileName } ${ formatBytes( received ) }${ totalText }` );
 
 		}
 
@@ -332,7 +352,7 @@ async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: Progre
 
 	}
 
-	await report( `Downloaded ${ formatBytes( received ) }` );
+	await report( `Downloaded ${ fileName } (${ formatBytes( received ) })` );
 	return bytes.buffer;
 
 }

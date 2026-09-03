@@ -32,7 +32,7 @@ async function loadTokenizer( root: string, recipe: DecoderRecipe, config: Huggi
 
 	if ( recipe.tokenizer === 'unigram' ) {
 
-		await report( `Loading tokenizer ${ root }tokenizer.json (this file is large)` );
+		await report( 'Loading tokenizer.json (this file is large)' );
 		const tokenizer = await UnigramTokenizer.fromURL( root, options );
 		const text = unwrapTextConfig( config );
 
@@ -50,7 +50,7 @@ async function loadTokenizer( root: string, recipe: DecoderRecipe, config: Huggi
 
 	if ( recipe.tokenizer === 'qwen' ) {
 
-		await report( `Loading tokenizer ${ root }vocab.json` );
+		await report( 'Loading vocab.json' );
 		let addedTokens: Array<{ id: number; content: string }> = [];
 
 		try {
@@ -76,7 +76,7 @@ async function loadTokenizer( root: string, recipe: DecoderRecipe, config: Huggi
 
 	}
 
-	await report( `Loading tokenizer ${ root }vocab.json` );
+	await report( 'Loading vocab.json' );
 	return GPT2Tokenizer.fromURLs( `${ root }vocab.json`, `${ root }merges.txt` );
 
 }
@@ -86,7 +86,7 @@ async function loadHFModelBundle( baseURL: string, options: LoaderOptions = {} )
 	const root = normalizeRoot( baseURL );
 	const report = createProgress( options.label || 'HFModelBundle', options.onProgress );
 
-	await report( `Loading config ${ root }config.json` );
+	await report( 'Loading config.json' );
 	const rawConfig = await fetchJSON<HuggingFaceConfig>( `${ root }config.json`, options.label || 'HFModelBundle' );
 	const architecture = architectureFor( rawConfig );
 	const recipe = recipeFor( rawConfig );

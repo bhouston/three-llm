@@ -141,7 +141,7 @@ class UnigramTokenizer implements Tokenizer {
 		const root = baseURL.endsWith( '/' ) ? baseURL : `${ baseURL }/`;
 		const report = createProgress( 'UnigramTokenizer', options.onProgress );
 
-		await report( `Fetching ${ root }tokenizer.json` );
+		await report( 'Fetching tokenizer.json' );
 		const tokenizerResponse = await fetch( `${ root }tokenizer.json` );
 
 		if ( tokenizerResponse.ok === false ) {

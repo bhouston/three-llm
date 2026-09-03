@@ -61,10 +61,7 @@ function fillSin(array: Float32Array, seed: number) {
 }
 
 function makeTensor(name: string, shape: number[], seed: number): Tensor {
-  const data = fillSin(
-    new Float32Array(shape.reduce((product, value) => product * value, 1)),
-    seed,
-  );
+  const data = fillSin(new Float32Array(shape.reduce((product, value) => product * value, 1)), seed);
   return { name, dtype: 'F32', shape, data };
 }
 
@@ -87,7 +84,7 @@ describe('MODEL_CATALOG', () => {
     expect(ids.some((id) => id.includes('gemma'))).toBe(false);
     for (const entry of MODEL_CATALOG) {
       expect(entry.url).toMatch(/^https:\/\/huggingface\.co\//);
-      expect(entry.localUrl).toMatch(/^\/api\/models\//);
+      expect(entry.localUrl).toMatch(/^https:\/\/storage\.googleapis\.com\/three-llm\//);
     }
   });
 });
@@ -400,11 +397,16 @@ describe('generate', () => {
       },
     };
 
-    generateSync(runner as never, 'prompt', { maxNewTokens: 0 }, {
-      rewindable: true,
-      resetCache() {},
-      forwardToken: () => new Float32Array([0, 1]),
-    });
+    generateSync(
+      runner as never,
+      'prompt',
+      { maxNewTokens: 0 },
+      {
+        rewindable: true,
+        resetCache() {},
+        forwardToken: () => new Float32Array([0, 1]),
+      },
+    );
 
     expect(prepared.inputTokens).toEqual([1, 2]);
     expect(prepared.newTokenBudget).toBe(0);
