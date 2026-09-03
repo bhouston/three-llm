@@ -23,4 +23,4 @@ RUN pnpm build
 
 EXPOSE 8080
 
-CMD ["node", "/app/packages/website/.output/server/index.mjs"]
+CMD ["node", "--import", "/app/packages/website/.output/server/instrument.server.mjs", "/app/packages/website/.output/server/index.mjs"]

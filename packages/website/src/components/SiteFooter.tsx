@@ -1,5 +1,6 @@
 import { HeartIcon } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 
 export function SiteFooter() {
@@ -16,6 +17,19 @@ export function SiteFooter() {
         <a href="https://ben3d.ca" className="text-foreground underline underline-offset-4">
           Ben Houston
         </a>
+        {import.meta.env.DEV ? (
+          <Button
+            className="ml-2 h-7 px-2 text-xs"
+            onClick={() => {
+              throw new Error('Sentry Test Error');
+            }}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Break the world
+          </Button>
+        ) : null}
       </p>
     </footer>
   );

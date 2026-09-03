@@ -1,5 +1,7 @@
+import * as Sentry from '@sentry/tanstackstart-react';
 import type { ErrorComponentProps } from '@tanstack/react-router';
 import { ErrorComponent, Link, rootRouteId, useMatch, useRouter } from '@tanstack/react-router';
+import { useEffect } from 'react';
 
 export function DefaultCatchBoundary({ error }: ErrorComponentProps) {
   const router = useRouter();
@@ -7,6 +9,10 @@ export function DefaultCatchBoundary({ error }: ErrorComponentProps) {
     strict: false,
     select: (state) => state.id === rootRouteId,
   });
+
+  useEffect(() => {
+    Sentry.captureException(error);
+  }, [error]);
 
   console.error(error);
 

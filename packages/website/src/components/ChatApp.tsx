@@ -4,6 +4,7 @@ import type { ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry 
 import { ArrowUpIcon, MessageSquareIcon, SettingsIcon, SquareIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { useGoogleAnalytics } from 'tanstack-router-ga4';
 
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -88,6 +89,7 @@ function conversationPrompt(runner: TslRunner, turns: ChatTurn[], enableThinking
 }
 
 export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelChange: (id: string) => void }) {
+  const ga = useGoogleAnalytics();
   const model = useMemo(() => selectedModel(modelId), [modelId]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -251,6 +253,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   useEffect(() => () => clearDraftFlushTimer(), [clearDraftFlushTimer]);
 
   function clearChat() {
+    ga.event('chat-clear', { model_name: model.name });
     generationIdRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = undefined;
@@ -264,6 +267,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
   function changeModel(nextId: string) {
     if (nextId === model.id) return;
+    const nextModel = MODEL_CATALOG.find((entry) => entry.id === nextId);
+    if (nextModel) {
+      ga.event('model-change', { model_name: nextModel.name });
+    }
     onModelChange(nextId);
   }
 
@@ -280,6 +287,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
     setGenerating(true);
     setDraft('');
     resetAssistantDraft();
+
+    ga.event('chat-message', { model_name: model.name, message_chars: userText.length });
 
     const nextHistory: ChatTurn[] = [...history, { role: 'user', text: userText }];
     setHistory(nextHistory);
@@ -341,6 +350,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
       if (generationId !== generationIdRef.current) return;
 
       const reply = result.generatedText || runner.weights.tokenizer.decode(generatedIds);
+      ga.event('chat-generate', { model_name: model.name, generation_chars: reply.length });
       conversationTokensRef.current = result.tokens;
       setHistory([...nextHistory, { role: 'assistant', text: reply }]);
       resetAssistantDraft();
@@ -364,6 +374,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
       setStatus(message);
       toast.error('Generation failed', { description: message });
       if (assistantDraftLatestRef.current !== '') {
+        ga.event('chat-generate', {
+          model_name: model.name,
+          generation_chars: assistantDraftLatestRef.current.length,
+        });
         setHistory([...nextHistory, { role: 'assistant', text: assistantDraftLatestRef.current }]);
       }
       resetAssistantDraft();
@@ -488,7 +502,11 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                     </SelectContent>
                   </Select>
 
-                  <Dialog>
+                  <Dialog
+                    onOpenChange={(open) => {
+                      if (open) ga.event('settings-open', { model_name: model.name });
+                    }}
+                  >
                     <DialogTrigger
                       render={
                         <InputGroupButton
