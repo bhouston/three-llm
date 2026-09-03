@@ -193,6 +193,9 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
       if (!canvas) return;
 
       try {
+        const downloadStart = performance.now();
+        ga.event('model-download', { model_name: model.name });
+
         setStatus(`Resolving ${model.name}…`);
         const [{ WebGPURenderer }, { createTSLRunner }] = await Promise.all([
           import('three/webgpu'),
@@ -229,6 +232,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         setMaxNewTokens(defaultMaxNewTokens(runner.maxTokens));
         setReady(true);
         setStatus(`Ready. Context ${runner.maxTokens} tokens.`);
+        ga.event('model-downloaded', {
+          model_name: model.name,
+          download_ms: Math.round(performance.now() - downloadStart),
+        });
       } catch (loadError) {
         const message = loadError instanceof Error ? loadError.message : String(loadError);
         if (!cancelled) {
@@ -248,7 +255,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
       rendererRef.current = undefined;
       runnerRef.current = undefined;
     };
-  }, [model]);
+  }, [ga, model]);
 
   useEffect(() => () => clearDraftFlushTimer(), [clearDraftFlushTimer]);
 
