@@ -16,7 +16,7 @@ import {
   splitHeadGate,
 } from './runtime/math.js';
 import { bfloat16ToFloat32, convertAllTensors, float16ToFloat32, tensorToFloat32 } from './load/tensors.js';
-import { MODEL_CATALOG } from './catalog.js';
+import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG } from './catalog.js';
 import { QwenWeights } from './qwen/QwenWeights.js';
 import { parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
 import { resolveTensor } from './load/TensorNameMap.js';
@@ -82,10 +82,17 @@ describe('MODEL_CATALOG', () => {
     const ids = MODEL_CATALOG.map((entry) => entry.id);
     expect(ids).toEqual(['tinystories', 'gpt2', 'smollm2', 'qwen3.5-0.8b', 'phi-1.5']);
     expect(ids.some((id) => id.includes('gemma'))).toBe(false);
+    expect(DEFAULT_MODEL_ID).toBe('smollm2');
+    expect(ids).toContain(DEFAULT_MODEL_ID);
     for (const entry of MODEL_CATALOG) {
       expect(entry.url).toMatch(/^https:\/\/huggingface\.co\//);
       expect(entry.localUrl).toMatch(/^https:\/\/storage\.googleapis\.com\/three-llm\//);
+      expect(entry.sizeHint).toMatch(/^\d+(\.\d+)? (MB|GB)$/);
+      expect(catalogLabel(entry)).toContain(`[${entry.sizeHint}]`);
     }
+    const qwen = MODEL_CATALOG.find((entry) => entry.id === 'qwen3.5-0.8b');
+    expect(qwen?.badge).toBe('Best Results');
+    expect(catalogLabel(qwen!)).toBe('Qwen3.5 0.8B (Best Results) [1.7 GB]');
   });
 });
 

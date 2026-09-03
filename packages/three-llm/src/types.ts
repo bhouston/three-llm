@@ -41,7 +41,8 @@ export interface ModelCatalogEntry {
   localUrl?: string;
   prompt: string;
   note: string;
-  sizeHint?: string;
+  sizeHint: string;
+  badge?: string;
 }
 
 export interface LoaderOptions {

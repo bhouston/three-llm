@@ -1,9 +1,10 @@
-import { MODEL_CATALOG, resolveModelURL } from 'three-llm/catalog';
+import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG, resolveModelURL } from 'three-llm/catalog';
 import type { ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry } from 'three-llm';
 import { ArrowUpIcon, MessageSquareIcon, SquareIcon, Trash2Icon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { MarkdownContent } from '@/components/MarkdownContent';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,9 +33,32 @@ type TslRunner = {
 type ChatTurn = { role: 'user' | 'assistant'; text: string };
 
 const DEFAULT_MAX_NEW_TOKENS = 1024;
+const DRAFT_FLUSH_MS = 1000;
+
+function ChatBubble({ turn, streaming = false }: { turn: ChatTurn; streaming?: boolean }) {
+  const isUser = turn.role === 'user';
+  return (
+    <div
+      className={
+        isUser
+          ? 'bg-primary text-primary-foreground ml-auto max-w-[85%] rounded-lg px-3 py-2 whitespace-pre-wrap'
+          : 'bg-muted max-w-[85%] rounded-lg px-3 py-2'
+      }
+    >
+      {isUser ? turn.text : <MarkdownContent text={turn.text} />}
+      {streaming ? (
+        <span className="bg-foreground/70 mt-2 inline-block size-1.5 animate-pulse rounded-full" aria-hidden />
+      ) : null}
+    </div>
+  );
+}
 
 function selectedModel(modelId: string | undefined): ModelCatalogEntry {
-  return MODEL_CATALOG.find((entry) => entry.id === modelId) ?? MODEL_CATALOG[0]!;
+  return (
+    MODEL_CATALOG.find((entry) => entry.id === modelId) ??
+    MODEL_CATALOG.find((entry) => entry.id === DEFAULT_MODEL_ID) ??
+    MODEL_CATALOG[0]!
+  );
 }
 
 function defaultMaxNewTokens(contextLimit: number): number {
@@ -62,6 +86,9 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   const rendererRef = useRef<{ dispose: () => void } | undefined>(undefined);
   const conversationTokensRef = useRef<number[] | undefined>(undefined);
   const abortRef = useRef<AbortController | undefined>(undefined);
+  const assistantDraftLatestRef = useRef('');
+  const draftFlushTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const lastDraftFlushRef = useRef(0);
 
   const [status, setStatus] = useState('Checking WebGPU…');
   const [ready, setReady] = useState(false);
@@ -82,6 +109,41 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
   const isQwen = (architecture ?? model.id).includes('qwen');
 
+  const clearDraftFlushTimer = useCallback(() => {
+    if (draftFlushTimerRef.current !== undefined) {
+      clearTimeout(draftFlushTimerRef.current);
+      draftFlushTimerRef.current = undefined;
+    }
+  }, []);
+
+  const flushAssistantDraft = useCallback(() => {
+    clearDraftFlushTimer();
+    lastDraftFlushRef.current = performance.now();
+    setAssistantDraft(assistantDraftLatestRef.current);
+  }, [clearDraftFlushTimer]);
+
+  const resetAssistantDraft = useCallback(() => {
+    assistantDraftLatestRef.current = '';
+    lastDraftFlushRef.current = 0;
+    clearDraftFlushTimer();
+    setAssistantDraft('');
+  }, [clearDraftFlushTimer]);
+
+  const queueAssistantDraft = useCallback(
+    (text: string) => {
+      assistantDraftLatestRef.current = text;
+      const elapsed = performance.now() - lastDraftFlushRef.current;
+      if (elapsed >= DRAFT_FLUSH_MS) {
+        flushAssistantDraft();
+        return;
+      }
+      if (draftFlushTimerRef.current === undefined) {
+        draftFlushTimerRef.current = setTimeout(flushAssistantDraft, DRAFT_FLUSH_MS - elapsed);
+      }
+    },
+    [flushAssistantDraft],
+  );
+
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
@@ -98,6 +160,12 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
       setError(null);
       setHistory([]);
       setDraft(model.prompt);
+      assistantDraftLatestRef.current = '';
+      lastDraftFlushRef.current = 0;
+      if (draftFlushTimerRef.current !== undefined) {
+        clearTimeout(draftFlushTimerRef.current);
+        draftFlushTimerRef.current = undefined;
+      }
       setAssistantDraft('');
       conversationTokensRef.current = undefined;
       setArchitecture(null);
@@ -166,10 +234,12 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
     };
   }, [model]);
 
+  useEffect(() => () => clearDraftFlushTimer(), [clearDraftFlushTimer]);
+
   function clearChat() {
     abortRef.current?.abort();
     setHistory([]);
-    setAssistantDraft('');
+    resetAssistantDraft();
     conversationTokensRef.current = undefined;
     runnerRef.current?.resetCache();
     if (runnerRef.current) setStatus(`Ready. Context ${runnerRef.current.maxTokens} tokens.`);
@@ -185,7 +255,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
     abortRef.current = abortController;
     setGenerating(true);
     setDraft('');
-    setAssistantDraft('');
+    resetAssistantDraft();
     setTokenRate('');
 
     const nextHistory: ChatTurn[] = [...history, { role: 'user', text: userText }];
@@ -223,7 +293,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         },
         onToken: (_text, nextToken) => {
           generatedIds.push(nextToken);
-          setAssistantDraft(runner.weights.tokenizer.decode(generatedIds));
+          queueAssistantDraft(runner.weights.tokenizer.decode(generatedIds));
           const elapsed = (performance.now() - generationStart) / 1000;
           if (generatedIds.length > 0 && elapsed > 0) {
             setTokenRate(`${(generatedIds.length / elapsed).toFixed(1)} tok/s`);
@@ -238,17 +308,24 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         );
       }
 
-      const result = await runner.generate(renderer, conversationPrompt(runner, nextHistory, enableThinking), generateOptions);
+      const result = await runner.generate(
+        renderer,
+        conversationPrompt(runner, nextHistory, enableThinking),
+        generateOptions,
+      );
       const reply = result.generatedText || runner.weights.tokenizer.decode(generatedIds);
       conversationTokensRef.current = result.tokens;
       setHistory([...nextHistory, { role: 'assistant', text: reply }]);
-      setAssistantDraft('');
+      resetAssistantDraft();
 
       const cacheNote = result.cachedPromptTokens
         ? ` Cached ${result.cachedPromptTokens}/${result.promptTokens} prompt tokens.`
         : '';
       const elapsed = (performance.now() - generationStart) / 1000;
-      const rate = result.generatedTokens.length > 0 && elapsed > 0 ? ` ${(result.generatedTokens.length / elapsed).toFixed(1)} tok/s` : '';
+      const rate =
+        result.generatedTokens.length > 0 && elapsed > 0
+          ? ` ${(result.generatedTokens.length / elapsed).toFixed(1)} tok/s`
+          : '';
       setTokenRate(rate.trim());
       setStatus(
         result.aborted
@@ -259,10 +336,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
       const message = generateError instanceof Error ? generateError.message : String(generateError);
       setStatus(message);
       toast.error('Generation failed', { description: message });
-      if (assistantDraft !== '') {
-        setHistory([...nextHistory, { role: 'assistant', text: assistantDraft }]);
+      if (assistantDraftLatestRef.current !== '') {
+        setHistory([...nextHistory, { role: 'assistant', text: assistantDraftLatestRef.current }]);
       }
-      setAssistantDraft('');
+      resetAssistantDraft();
     } finally {
       abortRef.current = undefined;
       setGenerating(false);
@@ -282,7 +359,11 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
             <Button variant="outline" nativeButton={false} render={<a href="https://github.com/bhouston/three-llm" />}>
               GitHub
             </Button>
-            <Button variant="outline" nativeButton={false} render={<a href="https://www.npmjs.com/package/three-llm" />}>
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<a href="https://www.npmjs.com/package/three-llm" />}
+            >
               npm
             </Button>
           </div>
@@ -308,13 +389,13 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                     disabled={generating}
                   >
                     <SelectTrigger className="w-full">
-                      <SelectValue />
+                      <SelectValue>{catalogLabel(model)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
                         {MODEL_CATALOG.map((entry) => (
                           <SelectItem key={entry.id} value={entry.id}>
-                            {entry.name}
+                            {catalogLabel(entry)}
                           </SelectItem>
                         ))}
                       </SelectGroup>
@@ -440,19 +521,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
               ) : (
                 <div className="flex flex-col gap-3">
                   {history.map((turn, index) => (
-                    <div
-                      key={`${turn.role}-${index}`}
-                      className={
-                        turn.role === 'user'
-                          ? 'bg-primary text-primary-foreground ml-auto max-w-[85%] rounded-lg px-3 py-2 whitespace-pre-wrap'
-                          : 'bg-muted max-w-[85%] rounded-lg px-3 py-2 whitespace-pre-wrap'
-                      }
-                    >
-                      {turn.text}
-                    </div>
+                    <ChatBubble key={`${turn.role}-${index}`} turn={turn} />
                   ))}
                   {assistantDraft !== '' ? (
-                    <div className="bg-muted max-w-[85%] rounded-lg px-3 py-2 whitespace-pre-wrap">{assistantDraft}</div>
+                    <ChatBubble turn={{ role: 'assistant', text: assistantDraft }} streaming />
                   ) : null}
                   <div ref={messagesEndRef} />
                 </div>
@@ -479,8 +551,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                       return;
                     }
 
-                    const isEnter =
-                      event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter';
+                    const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter';
                     if (
                       isEnter &&
                       event.shiftKey === false &&

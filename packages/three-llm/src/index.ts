@@ -4,7 +4,7 @@ export { DecoderTSLRunner } from './decoder/DecoderTSLRunner.js';
 export { DecoderWeights } from './decoder/DecoderWeights.js';
 export { GPT2Tokenizer, GPT2_TOKEN_PATTERN, QWEN_TOKEN_PATTERN } from './load/GPT2Tokenizer.js';
 export { detectPrefix, loadHFModelBundle, normalizeRoot } from './load/HFModelBundle.js';
-export { MODEL_CATALOG, MODELS_BUCKET_URL, resolveModelURL } from './catalog.js';
+export { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG, MODELS_BUCKET_URL, resolveModelURL } from './catalog.js';
 export { createCPURunner, createTSLRunner, loadWeights } from './runtime/factory.js';
 export {
   generateAsync,
