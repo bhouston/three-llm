@@ -1,6 +1,6 @@
 {
   "name": "three-llm",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Browser LLM inference on WebGPU using Three.js TSL compute shaders.",
   "keywords": [
     "gpt2",

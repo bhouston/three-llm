@@ -1,4 +1,4 @@
-import { GithubIcon } from 'lucide-react';
+import { BookOpenIcon, GithubIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -43,11 +43,39 @@ export function SiteHeader() {
           <div className="flex min-w-0 flex-col gap-0.5">
             <h1 className="font-heading text-base font-medium tracking-tight">Three-LLM</h1>
             <p className="text-muted-foreground text-sm text-pretty">
-              The open-source Three.js-based modern LLM Engine that runs in your browser via WebGPU compute.
+              The open-source Three.js-based modern LLM Engine that runs in your browser via WebGPU compute.{' '}
+              <a
+                href="https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs"
+                className="text-foreground underline underline-offset-4"
+              >
+                Read the technical write-up
+              </a>
+              .
             </p>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  nativeButton={false}
+                  render={
+                    <a
+                      href="https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs"
+                      aria-label="Technical write-up"
+                    />
+                  }
+                  aria-label="Technical write-up"
+                />
+              }
+            >
+              <BookOpenIcon />
+            </TooltipTrigger>
+            <TooltipContent>Technical write-up</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger
               render={
