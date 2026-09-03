@@ -1,4 +1,4 @@
-import { fetchArrayBuffer, fetchJSON, createProgress } from './tensors.js';
+import { fetchArrayBuffer, fetchJSON, fetchResource, createProgress } from './tensors.js';
 import type { LoaderOptions, Tensor, TensorMap } from '../types.js';
 
 /**
@@ -184,8 +184,16 @@ function parseSafeTensors( buffer: ArrayBuffer, options: LoaderOptions = {} ): {
 
 async function resolveSafetensorFiles( root: string, options: LoaderOptions = {} ): Promise<string[]> {
 
-	const singleResponse = await fetch( `${ root }model.safetensors`, { method: 'HEAD' } );
-	if ( singleResponse.ok ) return [ 'model.safetensors' ];
+	try {
+
+		const singleResponse = await fetchResource( `${ root }model.safetensors`, { method: 'HEAD' } );
+		if ( singleResponse.ok ) return [ 'model.safetensors' ];
+
+	} catch {
+
+		// Safari can reject a CORS HEAD even when a later GET would work.
+
+	}
 
 	const index = await fetchJSON<{ weight_map: Record<string, string> }>( `${ root }model.safetensors.index.json`, options.label || 'SafeTensorsLoader' );
 	return [ ...new Set( Object.values( index.weight_map ) ) ];

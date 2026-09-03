@@ -1,7 +1,7 @@
 import { completionFollowUpText, formatPrompt } from 'three-llm';
 import { DEFAULT_MODEL_ID, MODEL_CATALOG, resolveModelURL } from 'three-llm/catalog';
 import type { ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry } from 'three-llm';
-import { ArrowUpIcon, GithubIcon, MessageSquareIcon, SettingsIcon, SquareIcon } from 'lucide-react';
+import { ArrowUpIcon, MessageSquareIcon, SettingsIcon, SquareIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -26,7 +26,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 type TslRunner = {
   maxTokens: number;
@@ -41,14 +40,6 @@ type TslRunner = {
 };
 
 type ChatTurn = { role: 'user' | 'assistant'; text: string };
-
-function NpmIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
-      <path d="M0 0v24h24V0H0zm19.2 19.2h-4.8V8.4H9.6v10.8H4.8V4.8h14.4v14.4z" />
-    </svg>
-  );
-}
 
 const DEFAULT_MAX_NEW_TOKENS = 1024;
 const MOBILE_MAX_TOKENS = 1024;
@@ -387,49 +378,6 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   return (
     <div className="flex h-full min-h-0 flex-col">
       <canvas ref={canvasRef} className="hidden" width={1} height={1} aria-hidden />
-      <header className="border-b bg-background">
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-4 py-3">
-          <div className="flex flex-col gap-0.5">
-            <p className="text-sm font-medium">three-llm</p>
-            <p className="text-muted-foreground text-sm">WebGPU LLM chat in the browser</p>
-          </div>
-          <div className="flex items-center gap-1">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    nativeButton={false}
-                    render={<a href="https://github.com/bhouston/three-llm" aria-label="GitHub" />}
-                    aria-label="GitHub"
-                  />
-                }
-              >
-                <GithubIcon />
-              </TooltipTrigger>
-              <TooltipContent>GitHub</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    nativeButton={false}
-                    render={<a href="https://www.npmjs.com/package/three-llm" aria-label="npm" />}
-                    aria-label="npm"
-                  />
-                }
-              >
-                <NpmIcon />
-              </TooltipTrigger>
-              <TooltipContent>npm</TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
-      </header>
-
       <main className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col px-4">
         {error ? (
           <Alert variant="destructive" className="mt-4">

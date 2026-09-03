@@ -23,7 +23,7 @@ import {
   softmax,
   splitHeadGate,
 } from './runtime/math.js';
-import { bfloat16ToFloat32, convertAllTensors, copyTensorRow, float16ToFloat32, isEmbeddingTensorName, isolateTensorData, tensorToFloat32 } from './load/tensors.js';
+import { bfloat16ToFloat32, convertAllTensors, copyTensorRow, float16ToFloat32, isEmbeddingTensorName, isolateTensorData, rewriteGoogleStorageURL, tensorToFloat32 } from './load/tensors.js';
 import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG } from './catalog.js';
 import { QwenWeights } from './qwen/QwenWeights.js';
 import { QwenTSLRunner } from './qwen/QwenTSLRunner.js';
@@ -77,6 +77,17 @@ describe('MODEL_CATALOG', () => {
   });
 });
 
+describe('rewriteGoogleStorageURL', () => {
+  it('sends GCS objects through the JSON download API', () => {
+    expect(rewriteGoogleStorageURL('https://storage.googleapis.com/three-llm/smollm2-135m/model.safetensors')).toBe(
+      'https://storage.googleapis.com/download/storage/v1/b/three-llm/o/smollm2-135m%2Fmodel.safetensors?alt=media',
+    );
+    expect(rewriteGoogleStorageURL('https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors')).toBe(
+      'https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors',
+    );
+  });
+});
+
 describe('SafeTensorsLoader', () => {
   it('uses a single-file checkpoint when model.safetensors exists', async () => {
     const originalFetch = globalThis.fetch;
@@ -93,6 +104,30 @@ describe('SafeTensorsLoader', () => {
     try {
       await expect(resolveSafetensorFiles('https://example.test/gpt2/')).resolves.toEqual(['model.safetensors']);
       expect(requested).toEqual(['HEAD https://example.test/gpt2/model.safetensors']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('heads GCS safetensors through the JSON download API', async () => {
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url.includes('model.safetensors') && init?.method === 'HEAD') {
+        return new Response(null, { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(resolveSafetensorFiles('https://storage.googleapis.com/three-llm/smollm2-135m/')).resolves.toEqual([
+        'model.safetensors',
+      ]);
+      expect(requested).toEqual([
+        'HEAD https://storage.googleapis.com/download/storage/v1/b/three-llm/o/smollm2-135m%2Fmodel.safetensors?alt=media',
+      ]);
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -330,9 +330,46 @@ function detectLanguagePrefix( tensors: TensorMap ): string {
 
 }
 
+// Public GCS object URLs (storage.googleapis.com/bucket/file) cache for a year
+// without Vary: Origin. Safari then reuses that cached copy for fetch() of large
+// binaries such as .safetensors and fails CORS. The JSON download API echoes the
+// requesting origin and sends Vary: Origin, which Safari accepts.
+function rewriteGoogleStorageURL( url: string ): string {
+
+	let parsed: URL;
+
+	try {
+
+		parsed = new URL( url );
+
+	} catch {
+
+		return url;
+
+	}
+
+	if ( parsed.hostname !== 'storage.googleapis.com' ) return url;
+	if ( parsed.pathname.startsWith( '/download/storage/v1/' ) || parsed.pathname.startsWith( '/storage/v1/' ) ) return url;
+
+	const parts = parsed.pathname.split( '/' ).filter( ( part ) => part.length > 0 );
+	const bucket = parts.shift();
+	if ( bucket === undefined || parts.length === 0 ) return url;
+
+	const params = new URLSearchParams( parsed.search );
+	params.set( 'alt', 'media' );
+	return `https://storage.googleapis.com/download/storage/v1/b/${ encodeURIComponent( bucket ) }/o/${ encodeURIComponent( parts.join( '/' ) ) }?${ params.toString() }`;
+
+}
+
+function fetchResource( url: string, init?: RequestInit ): Promise<Response> {
+
+	return fetch( rewriteGoogleStorageURL( url ), init );
+
+}
+
 async function fetchJSON<T = any>( url: string, label = 'LLM' ): Promise<T> {
 
-	const response = await fetch( url );
+	const response = await fetchResource( url );
 
 	if ( response.ok === false ) {
 
@@ -390,7 +427,7 @@ function fileNameFromURL( url: string ): string {
 
 async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: ProgressCallback ): Promise<ArrayBuffer> {
 
-	const response = await fetch( url );
+	const response = await fetchResource( url );
 
 	if ( response.ok === false ) {
 
@@ -484,6 +521,8 @@ export {
 	detectLanguagePrefix,
 	fetchArrayBuffer,
 	fetchJSON,
+	fetchResource,
+	rewriteGoogleStorageURL,
 	float16ToFloat32,
 	formatBytes,
 	isEmbeddingTensorName,

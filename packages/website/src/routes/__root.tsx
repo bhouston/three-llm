@@ -4,6 +4,7 @@ import { ThemeProvider } from 'next-themes';
 import { GoogleAnalytics } from 'tanstack-router-ga4';
 
 import { SiteFooter } from '@/components/SiteFooter';
+import { SiteHeader } from '@/components/SiteHeader';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
@@ -14,10 +15,11 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'three-llm — WebGPU chat' },
+      { title: 'Three-LLM — WebGPU LLM Engine' },
       {
         name: 'description',
-        content: 'Browser LLM inference on WebGPU using Three.js TSL compute shaders.',
+        content:
+          'The open-source Three.js-based modern LLM Engine that runs in your browser via WebGPU compute.',
       },
     ],
   }),
@@ -28,6 +30,7 @@ export const Route = createRootRoute({
 function RootLayout() {
   return (
     <div className="flex h-svh flex-col">
+      <SiteHeader />
       <div className="flex min-h-0 flex-1 flex-col">
         <Outlet />
       </div>
