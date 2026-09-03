@@ -41,9 +41,9 @@ export function SiteHeader() {
         <div className="flex min-w-0 items-start gap-3">
           <ThreeJsIcon className="mt-0.5 size-8 shrink-0" />
           <div className="flex min-w-0 flex-col gap-0.5">
-            <h1 className="font-heading text-base font-medium tracking-tight">Three-LLM</h1>
+            <h1 className="font-heading text-base font-medium tracking-tight">Three-LLM Demo Chat App</h1>
             <p className="text-muted-foreground text-sm text-pretty">
-              The open-source Three.js-based modern LLM Engine that runs in your browser via WebGPU compute.{' '}
+              Build using ' <a href="https://github.com/bhouston/three-llm" className="text-foreground underline underline-offset-4">three-llm</a>', the open-source Three.js-based modern LLM Engine that runs in your browser via WebGPU compute.{' '}
               <a
                 href="https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs"
                 className="text-foreground underline underline-offset-4"
