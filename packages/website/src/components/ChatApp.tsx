@@ -1,6 +1,6 @@
-import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG, resolveModelURL } from 'three-llm/catalog';
+import { DEFAULT_MODEL_ID, MODEL_CATALOG, resolveModelURL } from 'three-llm/catalog';
 import type { ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry } from 'three-llm';
-import { ArrowUpIcon, MessageSquareIcon, SquareIcon, Trash2Icon } from 'lucide-react';
+import { ArrowUpIcon, GithubIcon, MessageSquareIcon, SettingsIcon, SquareIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -8,16 +8,24 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Empty, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 type TslRunner = {
   maxTokens: number;
@@ -31,6 +39,14 @@ type TslRunner = {
 };
 
 type ChatTurn = { role: 'user' | 'assistant'; text: string };
+
+function NpmIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M0 0v24h24V0H0zm19.2 19.2h-4.8V8.4H9.6v10.8H4.8V4.8h14.4v14.4z" />
+    </svg>
+  );
+}
 
 const DEFAULT_MAX_NEW_TOKENS = 1024;
 const DRAFT_FLUSH_MS = 1000;
@@ -86,6 +102,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   const rendererRef = useRef<{ dispose: () => void } | undefined>(undefined);
   const conversationTokensRef = useRef<number[] | undefined>(undefined);
   const abortRef = useRef<AbortController | undefined>(undefined);
+  const generationIdRef = useRef(0);
   const assistantDraftLatestRef = useRef('');
   const draftFlushTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const lastDraftFlushRef = useRef(0);
@@ -105,9 +122,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   const [noRepeatNgramSize, setNoRepeatNgramSize] = useState(3);
   const [enableThinking, setEnableThinking] = useState(false);
   const [architecture, setArchitecture] = useState<string | null>(null);
-  const [tokenRate, setTokenRate] = useState<string>('');
 
   const isQwen = (architecture ?? model.id).includes('qwen');
+  const busy = !ready || generating;
+  const canClear = ready && (history.length > 0 || assistantDraft !== '');
 
   const clearDraftFlushTimer = useCallback(() => {
     if (draftFlushTimerRef.current !== undefined) {
@@ -237,12 +255,20 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   useEffect(() => () => clearDraftFlushTimer(), [clearDraftFlushTimer]);
 
   function clearChat() {
+    generationIdRef.current += 1;
     abortRef.current?.abort();
+    abortRef.current = undefined;
+    setGenerating(false);
     setHistory([]);
     resetAssistantDraft();
     conversationTokensRef.current = undefined;
     runnerRef.current?.resetCache();
     if (runnerRef.current) setStatus(`Ready. Context ${runnerRef.current.maxTokens} tokens.`);
+  }
+
+  function changeModel(nextId: string) {
+    if (nextId === model.id) return;
+    onModelChange(nextId);
   }
 
   async function sendMessage() {
@@ -253,10 +279,11 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
     const abortController = new AbortController();
     abortRef.current = abortController;
+    const generationId = generationIdRef.current + 1;
+    generationIdRef.current = generationId;
     setGenerating(true);
     setDraft('');
     resetAssistantDraft();
-    setTokenRate('');
 
     const nextHistory: ChatTurn[] = [...history, { role: 'user', text: userText }];
     setHistory(nextHistory);
@@ -275,6 +302,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         noRepeatNgramSize: Math.max(0, noRepeatNgramSize),
         signal: abortController.signal,
         onPrefill: ({ cachedPromptTokens, promptTokens }) => {
+          if (generationId !== generationIdRef.current) return;
           const fresh = promptTokens - cachedPromptTokens;
           setStatus(
             cachedPromptTokens > 0
@@ -283,6 +311,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
           );
         },
         onPrefillProgress: ({ cachedPromptTokens, completedPromptTokens = 0, promptTokens }) => {
+          if (generationId !== generationIdRef.current) return;
           const fresh = promptTokens - cachedPromptTokens;
           const completed = Math.max(0, completedPromptTokens - cachedPromptTokens);
           setStatus(
@@ -292,11 +321,11 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
           );
         },
         onToken: (_text, nextToken) => {
+          if (generationId !== generationIdRef.current) return;
           generatedIds.push(nextToken);
           queueAssistantDraft(runner.weights.tokenizer.decode(generatedIds));
           const elapsed = (performance.now() - generationStart) / 1000;
           if (generatedIds.length > 0 && elapsed > 0) {
-            setTokenRate(`${(generatedIds.length / elapsed).toFixed(1)} tok/s`);
             setStatus(`Generating… ${(generatedIds.length / elapsed).toFixed(1)} tok/s`);
           }
         },
@@ -313,6 +342,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         conversationPrompt(runner, nextHistory, enableThinking),
         generateOptions,
       );
+      if (generationId !== generationIdRef.current) return;
+
       const reply = result.generatedText || runner.weights.tokenizer.decode(generatedIds);
       conversationTokensRef.current = result.tokens;
       setHistory([...nextHistory, { role: 'assistant', text: reply }]);
@@ -326,13 +357,13 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         result.generatedTokens.length > 0 && elapsed > 0
           ? ` ${(result.generatedTokens.length / elapsed).toFixed(1)} tok/s`
           : '';
-      setTokenRate(rate.trim());
       setStatus(
         result.aborted
           ? `Stopped after ${result.generatedTokens.length} token(s).${rate}${cacheNote}`
           : `Generated ${result.generatedTokens.length} token(s).${rate}${cacheNote}`,
       );
     } catch (generateError) {
+      if (generationId !== generationIdRef.current) return;
       const message = generateError instanceof Error ? generateError.message : String(generateError);
       setStatus(message);
       toast.error('Generation failed', { description: message });
@@ -341,256 +372,296 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
       }
       resetAssistantDraft();
     } finally {
-      abortRef.current = undefined;
-      setGenerating(false);
+      if (generationId === generationIdRef.current) {
+        abortRef.current = undefined;
+        setGenerating(false);
+      }
     }
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <canvas ref={canvasRef} className="hidden" width={1} height={1} aria-hidden />
       <header className="border-b bg-background">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-4 py-4">
-          <div className="flex flex-col gap-1">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-4 py-3">
+          <div className="flex flex-col gap-0.5">
             <p className="text-sm font-medium">three-llm</p>
             <p className="text-muted-foreground text-sm">WebGPU LLM chat in the browser</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" nativeButton={false} render={<a href="https://github.com/bhouston/three-llm" />}>
-              GitHub
-            </Button>
-            <Button
-              variant="outline"
-              nativeButton={false}
-              render={<a href="https://www.npmjs.com/package/three-llm" />}
-            >
-              npm
-            </Button>
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    nativeButton={false}
+                    render={<a href="https://github.com/bhouston/three-llm" />}
+                    aria-label="GitHub"
+                  />
+                }
+              >
+                <GithubIcon />
+              </TooltipTrigger>
+              <TooltipContent>GitHub</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    nativeButton={false}
+                    render={<a href="https://www.npmjs.com/package/three-llm" />}
+                    aria-label="npm"
+                  />
+                }
+              >
+                <NpmIcon />
+              </TooltipTrigger>
+              <TooltipContent>npm</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 px-4 py-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Model</CardTitle>
-            <CardDescription>{model.note}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup className="gap-4">
-              <div className="flex flex-col gap-4 md:flex-row md:items-end">
-                <Field className="flex-1">
-                  <FieldLabel>Checkpoint</FieldLabel>
-                  <Select
-                    value={model.id}
-                    onValueChange={(value) => {
-                      if (typeof value === 'string') onModelChange(value);
-                    }}
-                    disabled={generating}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue>{catalogLabel(model)}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {MODEL_CATALOG.map((entry) => (
-                          <SelectItem key={entry.id} value={entry.id}>
-                            {catalogLabel(entry)}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <FieldDescription>Weights stream from the hosted model bucket on first load.</FieldDescription>
-                </Field>
-                <Button variant="outline" onClick={clearChat} disabled={!ready}>
-                  <Trash2Icon data-icon="inline-start" />
-                  Clear chat
-                </Button>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                <Field>
-                  <FieldLabel htmlFor="tokens">New tokens</FieldLabel>
-                  <Input
-                    id="tokens"
-                    type="number"
-                    min={1}
-                    max={Math.max(1, contextLimit - 1)}
-                    value={maxNewTokens}
-                    onChange={(event) => setMaxNewTokens(Number(event.target.value) || 1)}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="temperature">Temperature</FieldLabel>
-                  <Input
-                    id="temperature"
-                    type="number"
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    value={temperature}
-                    onChange={(event) => setTemperature(Number(event.target.value))}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="topK">Top K</FieldLabel>
-                  <Input
-                    id="topK"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={topK}
-                    onChange={(event) => setTopK(Number(event.target.value) || 1)}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="repetition">Repetition</FieldLabel>
-                  <Input
-                    id="repetition"
-                    type="number"
-                    min={1}
-                    max={2}
-                    step={0.05}
-                    value={repetitionPenalty}
-                    onChange={(event) => setRepetitionPenalty(Number(event.target.value) || 1)}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="ngram">N-gram</FieldLabel>
-                  <Input
-                    id="ngram"
-                    type="number"
-                    min={0}
-                    max={8}
-                    value={noRepeatNgramSize}
-                    onChange={(event) => setNoRepeatNgramSize(Number(event.target.value) || 0)}
-                  />
-                </Field>
-              </div>
-
-              {isQwen ? (
-                <Field orientation="horizontal">
-                  <FieldLabel htmlFor="thinking">Thinking</FieldLabel>
-                  <Switch
-                    id="thinking"
-                    checked={enableThinking}
-                    onCheckedChange={(checked) => setEnableThinking(checked === true)}
-                  />
-                  <FieldDescription>Off injects a closed think block so Qwen answers directly.</FieldDescription>
-                </Field>
-              ) : null}
-            </FieldGroup>
-          </CardContent>
-        </Card>
-
+      <main className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col px-4">
         {error ? (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="mt-4">
             <AlertTitle>Could not start the engine</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         ) : null}
 
-        <Card className="flex min-h-[420px] flex-1 flex-col">
-          <CardHeader className="flex-row items-center justify-between">
-            <div className="flex flex-col gap-1">
-              <CardTitle>Conversation</CardTitle>
-              <CardDescription>{status}</CardDescription>
+        <div className="relative min-h-0 flex-1">
+          {canClear ? (
+            <div className="pointer-events-none absolute inset-y-0 right-0 z-10 flex items-start pt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="pointer-events-auto"
+                onClick={clearChat}
+                aria-label="New conversation"
+              >
+                New
+                <MessageSquareIcon data-icon="inline-end" />
+              </Button>
             </div>
-            <div className="flex items-center gap-2">
-              {tokenRate ? <Badge variant="secondary">{tokenRate}</Badge> : null}
-              {architecture ? <Badge variant="outline">{architecture}</Badge> : <Skeleton className="h-5 w-16" />}
-            </div>
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
-            <ScrollArea className="min-h-[240px] flex-1 rounded-lg border p-4">
-              {history.length === 0 && assistantDraft === '' ? (
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <MessageSquareIcon />
-                    </EmptyMedia>
-                    <EmptyTitle>Send a message to start</EmptyTitle>
-                    <EmptyDescription>
-                      {ready
-                        ? `Loaded ${model.name}. Prompts run entirely in this browser on WebGPU.`
-                        : `Loading ${model.name}…`}
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  {history.map((turn, index) => (
-                    <ChatBubble key={`${turn.role}-${index}`} turn={turn} />
-                  ))}
-                  {assistantDraft !== '' ? (
-                    <ChatBubble turn={{ role: 'assistant', text: assistantDraft }} streaming />
-                  ) : null}
-                  <div ref={messagesEndRef} />
-                </div>
-              )}
-            </ScrollArea>
+          ) : null}
+          <ScrollArea className="h-full">
+            {history.length === 0 && assistantDraft === '' ? (
+              <Empty className="h-full min-h-64">
+                <EmptyHeader>
+                  <EmptyTitle>
+                    {ready ? 'Send a message to start the conversation.' : 'Loading model...'}
+                  </EmptyTitle>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              <div className="flex flex-col gap-3 py-6 pr-24">
+                {history.map((turn, index) => (
+                  <ChatBubble key={`${turn.role}-${index}`} turn={turn} />
+                ))}
+                {assistantDraft !== '' ? (
+                  <ChatBubble turn={{ role: 'assistant', text: assistantDraft }} streaming />
+                ) : null}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </ScrollArea>
+        </div>
 
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void sendMessage();
-              }}
-            >
-              <InputGroup>
-                <InputGroupTextarea
-                  name="message"
-                  placeholder={model.prompt}
-                  rows={3}
-                  value={draft}
-                  enterKeyHint="send"
-                  disabled={!ready || generating}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) {
-                      return;
-                    }
+        <div className="bg-background flex flex-col gap-2 pt-2 pb-4">
+          <p className="text-muted-foreground flex items-center gap-2 text-sm" aria-live="polite">
+            {busy && error === null ? <Spinner /> : null}
+            <span>{status}</span>
+          </p>
 
-                    const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter';
-                    if (
-                      isEnter &&
-                      event.shiftKey === false &&
-                      event.altKey === false &&
-                      event.metaKey === false &&
-                      event.ctrlKey === false
-                    ) {
-                      event.preventDefault();
-                      void sendMessage();
-                    }
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendMessage();
+            }}
+          >
+            <InputGroup>
+              <InputGroupTextarea
+                name="message"
+                placeholder={model.prompt}
+                rows={3}
+                value={draft}
+                enterKeyHint="send"
+                disabled={!ready || generating}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) {
+                    return;
+                  }
+
+                  const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter';
+                  if (
+                    isEnter &&
+                    event.shiftKey === false &&
+                    event.altKey === false &&
+                    event.metaKey === false &&
+                    event.ctrlKey === false
+                  ) {
+                    event.preventDefault();
+                    void sendMessage();
+                  }
+                }}
+              />
+              <InputGroupAddon align="block-end" className="justify-end">
+                <div
+                  className="flex items-center gap-1"
+                  onClick={(event) => {
+                    event.stopPropagation();
                   }}
-                />
-                <InputGroupAddon align="block-end">
-                  {generating ? (
-                    <InputGroupButton
-                      type="button"
-                      variant="destructive"
-                      onClick={() => abortRef.current?.abort()}
-                      aria-label="Stop generation"
+                >
+                  <Select
+                    value={model.id}
+                    onValueChange={(value) => {
+                      if (typeof value === 'string') changeModel(value);
+                    }}
+                    disabled={generating}
+                  >
+                    <SelectTrigger size="sm" type="button" aria-label="Model">
+                      <SelectValue>{model.name}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent side="top" align="end" alignItemWithTrigger={false} className="min-w-64">
+                      <SelectGroup>
+                        {MODEL_CATALOG.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            <span className="flex items-center gap-2">
+                              {entry.name}
+                              <span className="text-muted-foreground">{entry.sizeHint}</span>
+                              {entry.badge ? <Badge variant="secondary">{entry.badge}</Badge> : null}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+
+                  <Dialog>
+                    <DialogTrigger
+                      render={
+                        <InputGroupButton
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label="Generation settings"
+                        />
+                      }
                     >
-                      <SquareIcon data-icon="inline-start" />
-                      Stop
-                    </InputGroupButton>
-                  ) : (
-                    <InputGroupButton
-                      type="submit"
-                      variant="default"
-                      disabled={!ready || draft.trim() === ''}
-                      aria-label="Send message"
-                    >
-                      {ready ? <ArrowUpIcon data-icon="inline-start" /> : <Spinner data-icon="inline-start" />}
-                      {ready ? 'Send' : 'Loading'}
-                    </InputGroupButton>
-                  )}
-                </InputGroupAddon>
-              </InputGroup>
-            </form>
-          </CardContent>
-        </Card>
+                      <SettingsIcon />
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Generation settings</DialogTitle>
+                        <DialogDescription>{model.note}</DialogDescription>
+                      </DialogHeader>
+                      <FieldGroup>
+                        <Field>
+                          <FieldLabel htmlFor="tokens">New tokens</FieldLabel>
+                          <Input
+                            id="tokens"
+                            type="number"
+                            min={1}
+                            max={Math.max(1, contextLimit - 1)}
+                            value={maxNewTokens}
+                            onChange={(event) => setMaxNewTokens(Number(event.target.value) || 1)}
+                          />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="temperature">Temperature</FieldLabel>
+                          <Input
+                            id="temperature"
+                            type="number"
+                            min={0}
+                            max={2}
+                            step={0.1}
+                            value={temperature}
+                            onChange={(event) => setTemperature(Number(event.target.value))}
+                          />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="topK">Top K</FieldLabel>
+                          <Input
+                            id="topK"
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={topK}
+                            onChange={(event) => setTopK(Number(event.target.value) || 1)}
+                          />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="repetition">Repetition</FieldLabel>
+                          <Input
+                            id="repetition"
+                            type="number"
+                            min={1}
+                            max={2}
+                            step={0.05}
+                            value={repetitionPenalty}
+                            onChange={(event) => setRepetitionPenalty(Number(event.target.value) || 1)}
+                          />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="ngram">N-gram</FieldLabel>
+                          <Input
+                            id="ngram"
+                            type="number"
+                            min={0}
+                            max={8}
+                            value={noRepeatNgramSize}
+                            onChange={(event) => setNoRepeatNgramSize(Number(event.target.value) || 0)}
+                          />
+                        </Field>
+                        {isQwen ? (
+                          <Field orientation="horizontal">
+                            <FieldLabel htmlFor="thinking">Thinking</FieldLabel>
+                            <Switch
+                              id="thinking"
+                              checked={enableThinking}
+                              onCheckedChange={(checked) => setEnableThinking(checked === true)}
+                            />
+                            <FieldDescription>
+                              Off injects a closed think block so Qwen answers directly.
+                            </FieldDescription>
+                          </Field>
+                        ) : null}
+                      </FieldGroup>
+                      <DialogFooter showCloseButton />
+                    </DialogContent>
+                  </Dialog>
+                </div>
+
+                {generating ? (
+                  <InputGroupButton
+                    type="button"
+                    variant="destructive"
+                    onClick={() => abortRef.current?.abort()}
+                    aria-label="Stop generation"
+                  >
+                    <SquareIcon data-icon="inline-start" />
+                    Stop
+                  </InputGroupButton>
+                ) : (
+                  <InputGroupButton
+                    type="submit"
+                    variant="default"
+                    disabled={!ready || draft.trim() === ''}
+                    aria-label="Send message"
+                  >
+                    {ready ? <ArrowUpIcon data-icon="inline-start" /> : <Spinner data-icon="inline-start" />}
+                    {ready ? 'Send' : 'Loading'}
+                  </InputGroupButton>
+                )}
+              </InputGroupAddon>
+            </InputGroup>
+          </form>
+        </div>
       </main>
     </div>
   );

@@ -1,9 +1,13 @@
 import '../app.css';
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
 import { ThemeProvider } from 'next-themes';
+import { GoogleAnalytics } from 'tanstack-router-ga4';
 
+import { SiteFooter } from '@/components/SiteFooter';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+
+const GA_MEASUREMENT_ID = 'G-72GEYG4JGH';
 
 export const Route = createRootRoute({
   head: () => ({
@@ -22,7 +26,14 @@ export const Route = createRootRoute({
 });
 
 function RootLayout() {
-  return <Outlet />;
+  return (
+    <div className="flex h-svh flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <Outlet />
+      </div>
+      <SiteFooter />
+    </div>
+  );
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {
@@ -31,7 +42,8 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body className="bg-background text-foreground min-h-screen antialiased">
+      <body className="bg-background text-foreground min-h-svh antialiased">
+        <GoogleAnalytics measurementId={GA_MEASUREMENT_ID} />
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <TooltipProvider>
             {children}
