@@ -1,4 +1,11 @@
-import { fetchArrayBuffer, fetchJSON, fetchResource, createProgress, formatBytes } from './tensors.js';
+import {
+  fetchArrayBuffer,
+  fetchJSON,
+  fetchResource,
+  createProgress,
+  formatBytes,
+  modelDownloadPartCount,
+} from './tensors.js';
 import type { LoaderOptions, Tensor, TensorMap } from '../types.js';
 
 /**
@@ -9,6 +16,7 @@ import type { LoaderOptions, Tensor, TensorMap } from '../types.js';
  */
 interface DownloadProgressOptions {
   quiet?: boolean;
+  onBytes?: (received: number, total: number) => void | Promise<void>;
 }
 
 class SafeTensorsLoader {
@@ -198,26 +206,46 @@ async function loadSafetensorsModel(root: string, options: LoaderOptions = {}): 
   const files = await resolveSafetensorFiles(root, options);
   const fileSizes = await safetensorFileSizes(root, files, options.label || 'SafeTensorsLoader');
   const totalBytes = fileSizes.reduce((total, size) => total + size, 0);
-  let completedBytes = 0;
+  const partCounts = fileSizes.map((size) => modelDownloadPartCount(size));
+  const totalParts = partCounts.reduce((total, count) => total + count, 0);
+  const completedParts = new Array<number>(files.length).fill(0);
+  const completedBytes = new Array<number>(files.length).fill(0);
 
-  async function reportTensorProgress(completedFiles: number): Promise<void> {
+  async function reportTensorProgress(): Promise<void> {
+    const doneParts = completedParts.reduce((total, count) => total + count, 0);
+    const doneBytes = completedBytes.reduce((total, size) => total + size, 0);
     const byteText =
-      totalBytes > 0
-        ? `${formatBytes(completedBytes)} of ${formatBytes(totalBytes)}`
-        : `${formatBytes(completedBytes)} loaded`;
+      totalBytes > 0 ? `${formatBytes(doneBytes)} of ${formatBytes(totalBytes)}` : `${formatBytes(doneBytes)} loaded`;
 
-    await report(`Loading tensor model data, ${completedFiles} of ${files.length} files, (${byteText})`);
+    await report(`Loading tensor model data, ${doneParts} of ${totalParts} parts, (${byteText})`);
+  }
+
+  async function reportFileDownloadProgress(fileIndex: number, received: number, total: number): Promise<void> {
+    const knownTotal = fileSizes[fileIndex] || total || received;
+    const filePartCount = partCounts[fileIndex] || 1;
+    const nextCompletedParts =
+      knownTotal > 0 ? Math.min(filePartCount, Math.floor((received * filePartCount) / knownTotal)) : 0;
+
+    if (nextCompletedParts <= completedParts[fileIndex]) return;
+
+    completedParts[fileIndex] = nextCompletedParts;
+    completedBytes[fileIndex] = received;
+    await reportTensorProgress();
   }
 
   const tensors: TensorMap = {};
-  await reportTensorProgress(0);
+  await reportTensorProgress();
 
   for (let i = 0; i < files.length; i++) {
     const parsed = await loader.load(`${root}${files[i]}`, options, {
       quiet: true,
+      onBytes: (received, total) => reportFileDownloadProgress(i, received, total),
     });
-    completedBytes += fileSizes[i] || 0;
-    await reportTensorProgress(i + 1);
+    if (completedParts[i] < (partCounts[i] || 1)) {
+      completedParts[i] = partCounts[i] || 1;
+      completedBytes[i] = fileSizes[i] || completedBytes[i] || 0;
+      await reportTensorProgress();
+    }
     Object.assign(tensors, parsed.tensors);
   }
 

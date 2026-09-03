@@ -47,6 +47,7 @@ function float16ToFloat32(value: number): number {
 const _bf16Bits = new Uint32Array(1);
 const _bf16Float = new Float32Array(_bf16Bits.buffer);
 const CONVERT_CHUNK_ELEMENTS = 1 << 20; // 1,048,576 values ≈ 2 MB of BF16
+const CONVERT_PROGRESS_INTERVAL_MS = 200;
 const STREAM_BUFFER_LIMIT = 256 * 1024 * 1024;
 const FETCH_RETRY_COUNT = 2;
 const MODEL_CHUNK_BYTES = 24 * 1024 * 1024;
@@ -55,6 +56,10 @@ const MODEL_CHUNK_CONCURRENCY = 3;
 interface DownloadProgressOptions {
   quiet?: boolean;
   onBytes?: (received: number, total: number) => void | Promise<void>;
+}
+
+interface ProgressOptions {
+  minIntervalMs?: number;
 }
 
 function bfloat16ToFloat32(value: number): number {
@@ -188,11 +193,11 @@ async function convertAllTensors(
 
   for (let i = 0; i < names.length; i++) total += tensors[names[i]].data.length;
 
-  const dtype = tensors[names[0]].dtype;
-  const report = createProgress(label, onProgress);
+  const report = createProgress(label, onProgress, { minIntervalMs: CONVERT_PROGRESS_INTERVAL_MS });
   let done = 0;
+  const totalBytes = total * 2;
 
-  await report(`Converting ${names.length} ${dtype} tensors (${formatBytes(total * 2)})...`);
+  await report(`Converting tensor data, ${formatBytes(0)} of ${formatBytes(totalBytes)}`, true);
 
   for (let n = 0; n < names.length; n++) {
     const name = names[n];
@@ -206,10 +211,7 @@ async function convertAllTensors(
       convertRange(source, target, start, end);
       done += end - start;
 
-      const pct = Math.min(100, Math.round((100 * done) / total));
-      await report(
-        `Converting ${tensor.dtype} ${pct}% (${formatBytes(done * 2)} / ${formatBytes(total * 2)}) — ${n + 1}/${names.length} ${name}`,
-      );
+      await report(`Converting tensor data, ${formatBytes(done * 2)} of ${formatBytes(totalBytes)}`, done === total);
     }
 
     tensor.data = target;
@@ -421,9 +423,19 @@ function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function createProgress(label: string, onProgress?: ProgressCallback) {
-  return async function report(message: string): Promise<void> {
-    if (onProgress) onProgress(`${label}: ${message}`);
+function createProgress(label: string, onProgress?: ProgressCallback, options: ProgressOptions = {}) {
+  let lastReport = 0;
+
+  return async function report(message: string, force = false): Promise<void> {
+    const now = Date.now();
+    const canReport =
+      force || options.minIntervalMs === undefined || lastReport === 0 || now - lastReport >= options.minIntervalMs;
+
+    if (onProgress && canReport) {
+      lastReport = now;
+      onProgress(`${label}: ${message}`);
+    }
+
     await yieldToBrowser();
   };
 }
@@ -468,6 +480,11 @@ function canUseModelChunks(url: string): boolean {
   if (parsed.pathname.startsWith('/api/models/') === false) return false;
 
   return parsed.searchParams.has('part') === false && parsed.searchParams.has('shardId') === false;
+}
+
+function modelDownloadPartCount(bytes: number): number {
+  if (Number.isSafeInteger(bytes) === false || bytes <= 0) return 1;
+  return Math.max(1, Math.ceil(bytes / MODEL_CHUNK_BYTES));
 }
 
 function modelChunkURL(url: string, part: number, partSize: number): string {
@@ -754,6 +771,7 @@ export {
   fetchJSON,
   fetchResource,
   fetchText,
+  modelDownloadPartCount,
   rewriteGoogleStorageURL,
   float16ToFloat32,
   formatBytes,

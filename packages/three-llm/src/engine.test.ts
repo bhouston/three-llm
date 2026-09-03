@@ -274,9 +274,9 @@ describe('SafeTensorsLoader', () => {
         onProgress: (message) => progress.push(message),
       });
 
-      expect(progress.some((message) => /^Test: Loading tensor model data, 0 of 2 files, \(/.test(message))).toBe(true);
-      expect(progress.some((message) => /^Test: Loading tensor model data, 1 of 2 files, \(/.test(message))).toBe(true);
-      expect(progress.some((message) => /^Test: Loading tensor model data, 2 of 2 files, \(/.test(message))).toBe(true);
+      expect(progress.some((message) => /^Test: Loading tensor model data, 0 of 2 parts, \(/.test(message))).toBe(true);
+      expect(progress.some((message) => /^Test: Loading tensor model data, 1 of 2 parts, \(/.test(message))).toBe(true);
+      expect(progress.some((message) => /^Test: Loading tensor model data, 2 of 2 parts, \(/.test(message))).toBe(true);
       expect(progress.some((message) => message.includes('model-00001-of-00002'))).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
@@ -471,7 +471,8 @@ describe('tensors', () => {
     expect(Math.abs((small.data as Float32Array)[0]! - 1)).toBeLessThan(1e-6);
     expect(Math.abs((small.data as Float32Array)[1]! - 2)).toBeLessThan(1e-6);
     expect(tensors.left?.dtype).toBe('F32');
-    expect(messages.some((message) => message.includes('Converting BF16'))).toBe(true);
+    expect(messages).toContain('Test: Converting tensor data, 0 B of 4 B');
+    expect(messages).toContain('Test: Converting tensor data, 4 B of 4 B');
   });
 
   it('skips embedding tensors during conversion and copies one row at a time', async () => {
