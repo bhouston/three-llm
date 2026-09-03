@@ -3,7 +3,7 @@
  *
  */
 
-import type { HuggingFaceConfig, PreparedGeneration, ProgressCallback, Tensor, TensorMap, Tokenizer } from '../types.js';
+import type { DecoderBlock, HuggingFaceConfig, PreparedGeneration, ProgressCallback, Tensor, TensorMap, Tokenizer } from '../types.js';
 
 function transpose2D( data: Float32Array, rows: number, columns: number ): Float32Array {
 
@@ -76,6 +76,100 @@ function convertBF16Range( source: Uint16Array, target: Float32Array, start: num
 function convertF16Range( source: Uint16Array, target: Float32Array, start: number, end: number ): void {
 
 	for ( let i = start; i < end; i ++ ) target[ i ] = float16ToFloat32( source[ i ] );
+
+}
+
+function isEmbeddingTensorName( name: string ): boolean {
+
+	return /(?:^|[./])(embed_tokens\.weight|wte\.weight|wpe\.weight)$/.test( name );
+
+}
+
+function isolateTensorData( tensor: Tensor ): Tensor {
+
+	const data = tensor.data;
+	if ( data.byteOffset === 0 && data.buffer.byteLength === data.byteLength ) return tensor;
+
+	const Isolated = data.constructor as new ( values: ArrayLike<number> | ArrayLike<bigint> ) => Tensor['data'];
+	tensor.data = new Isolated( data as never );
+	return tensor;
+
+}
+
+function isolateEmbeddingTensors( tensors: TensorMap ): void {
+
+	for ( const name in tensors ) {
+
+		if ( isEmbeddingTensorName( name ) ) isolateTensorData( tensors[ name ] );
+
+	}
+
+}
+
+function copyTensorRow( tensor: Tensor, offset: number, size: number, target: Float32Array<ArrayBufferLike>, scale = 1 ): Float32Array {
+
+	if ( tensor.dtype === 'F32' ) {
+
+		const data = tensor.data as Float32Array;
+
+		if ( scale === 1 ) {
+
+			target.set( data.subarray( offset, offset + size ) );
+			return target;
+
+		}
+
+		for ( let i = 0; i < size; i ++ ) target[ i ] = data[ offset + i ] * scale;
+
+		return target;
+
+	}
+
+	if ( tensor.dtype !== 'F16' && tensor.dtype !== 'BF16' ) {
+
+		throw new Error( `LLMTensors: Tensor "${ tensor.name }" uses dtype "${ tensor.dtype }"; only F32, F16, and BF16 are supported.` );
+
+	}
+
+	const source = tensor.data as Uint16Array;
+	const convert = tensor.dtype === 'BF16' ? bfloat16ToFloat32 : float16ToFloat32;
+
+	for ( let i = 0; i < size; i ++ ) {
+
+		const value = convert( source[ offset + i ] );
+		target[ i ] = scale === 1 ? value : value * scale;
+
+	}
+
+	return target;
+
+}
+
+function releaseBlockWeightArrays( block: DecoderBlock ): void {
+
+	const record = block as unknown as Record<string, unknown>;
+
+	for ( const key in record ) {
+
+		const value = record[ key ];
+
+		if ( value instanceof Float32Array ) {
+
+			record[ key ] = undefined;
+
+		} else if ( key === 'delta' && value !== null && typeof value === 'object' ) {
+
+			const delta = value as Record<string, unknown>;
+
+			for ( const deltaKey in delta ) {
+
+				if ( delta[ deltaKey ] instanceof Float32Array ) delta[ deltaKey ] = undefined;
+
+			}
+
+		}
+
+	}
 
 }
 
@@ -318,6 +412,7 @@ async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: Progre
 	}
 
 	const reader = response.body.getReader();
+	let bytes = total > 0 ? new Uint8Array( total ) : null;
 	const chunks: Uint8Array[] = [];
 	let received = 0;
 	let lastReport = 0;
@@ -329,7 +424,23 @@ async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: Progre
 		const { done, value } = await reader.read();
 		if ( done ) break;
 
-		chunks.push( value );
+		if ( bytes !== null && received + value.byteLength <= bytes.byteLength ) {
+
+			bytes.set( value, received );
+
+		} else {
+
+			if ( bytes !== null ) {
+
+				chunks.push( bytes.subarray( 0, received ) );
+				bytes = null;
+
+			}
+
+			chunks.push( value );
+
+		}
+
 		received += value.byteLength;
 
 		if ( received - lastReport >= 8 * 1024 * 1024 || ( total > 0 && received === total ) ) {
@@ -342,33 +453,46 @@ async function fetchArrayBuffer( url: string, label = 'LLM', onProgress?: Progre
 
 	}
 
-	const bytes = new Uint8Array( received );
+	if ( bytes !== null ) {
+
+		await report( `Downloaded ${ fileName } (${ formatBytes( received ) })` );
+		return received === bytes.byteLength ? bytes.buffer : bytes.buffer.slice( 0, received );
+
+	}
+
+	const packed = new Uint8Array( received );
 	let offset = 0;
 
 	for ( let i = 0; i < chunks.length; i ++ ) {
 
-		bytes.set( chunks[ i ], offset );
+		packed.set( chunks[ i ], offset );
 		offset += chunks[ i ].byteLength;
 
 	}
 
+	chunks.length = 0;
 	await report( `Downloaded ${ fileName } (${ formatBytes( received ) })` );
-	return bytes.buffer;
+	return packed.buffer;
 
 }
 
 export {
 	bfloat16ToFloat32,
 	convertAllTensors,
+	copyTensorRow,
 	createProgress,
 	detectLanguagePrefix,
 	fetchArrayBuffer,
 	fetchJSON,
 	float16ToFloat32,
 	formatBytes,
+	isEmbeddingTensorName,
+	isolateEmbeddingTensors,
+	isolateTensorData,
 	packBiases,
 	packProjections,
 	prepareGeneration,
+	releaseBlockWeightArrays,
 	tensorToFloat32,
 	transpose2D,
 	unwrapTextConfig,

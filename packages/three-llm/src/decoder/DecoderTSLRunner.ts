@@ -14,6 +14,10 @@ import type { LogitChunk } from '../tsl/TSLLogits.js';
 import { TSLMLP } from '../tsl/TSLMLP.js';
 import { TSLNormalize } from '../tsl/TSLNormalize.js';
 import { TSLRMSNorm } from '../tsl/TSLRMSNorm.js';
+import {
+	collectAttentionWeights, collectLinearWeights, collectLogitWeights, collectMlpWeights, collectNormWeights,
+	uploadAndReleaseStaticWeights
+} from '../tsl/releaseCPU.js';
 import type {
 	ComputeNode, DecoderBlock, DecoderRecipe, GenerateOptions, GenerationResult, LoaderOptions, Renderer,
 	RunnerOptions, SampleOptions, TslNode
@@ -74,6 +78,7 @@ class DecoderTSLRunner {
 	computeNodes: ComputeNode[];
 	_cacheTokens?: number[];
 	_cacheLogits?: Float32Array | null;
+	_releasedCPUWeights: boolean;
 
 	constructor( weights: DecoderWeights, options: RunnerOptions = {} ) {
 
@@ -112,6 +117,7 @@ class DecoderTSLRunner {
 
 		this.finalNorm = this.buildFinalNorm( currentNode );
 		this.logits = createChunkedLogitLayers( this.finalNorm.outputNode, weights, this.logitChunkSize, `${ weights.architecture }Logits` );
+		weights.logitWeight = null;
 		this.logitSampler = createLogitSampler( this.logits, {
 			candidateCount: options.logitCandidateCount || 8,
 			logitSoftcap: this.recipe.finalLogitSoftcap,
@@ -119,6 +125,8 @@ class DecoderTSLRunner {
 		} );
 		this.prefillComputeNodes = this.createComputeNodes( false );
 		this.computeNodes = this.createComputeNodes();
+		this.weights.releaseCheckpointTensors();
+		this._releasedCPUWeights = false;
 
 	}
 
@@ -393,6 +401,7 @@ class DecoderTSLRunner {
 		renderer.compute( computeLogits
 			? ( sampleCandidateCount > 0 ? this.sampleComputeNodes( sampleCandidateCount ) : this.computeNodes )
 			: this.prefillComputeNodes );
+		this.prepare( renderer );
 
 	}
 
@@ -417,6 +426,7 @@ class DecoderTSLRunner {
 			this.prefillCursorAttribute.needsUpdate = true;
 			this.setPosition( offset );
 			renderer.compute( this.prefillChunkComputeNodes( count ) );
+			this.prepare( renderer );
 			if ( onProgress ) await onProgress( offset + count );
 
 		}
@@ -445,8 +455,46 @@ class DecoderTSLRunner {
 
 	}
 
+	collectStaticWeightAttributes() {
+
+		const attributes: StorageBufferAttribute[] = [];
+
+		for ( const layer of this.layers ) {
+
+			if ( layer.ln ) collectNormWeights( layer.ln, attributes );
+			if ( layer.ln1 ) collectNormWeights( layer.ln1, attributes );
+			if ( layer.ln2 ) collectNormWeights( layer.ln2, attributes );
+			if ( layer.postAttnNorm ) collectNormWeights( layer.postAttnNorm, attributes );
+			if ( layer.preMlp ) collectNormWeights( layer.preMlp, attributes );
+			if ( layer.postMlpNorm ) collectNormWeights( layer.postMlpNorm, attributes );
+			collectLinearWeights( layer.qkv, attributes );
+			collectAttentionWeights( layer.attention, attributes );
+			collectLinearWeights( layer.attnProj, attributes );
+			collectMlpWeights( layer.mlp, attributes );
+
+		}
+
+		collectNormWeights( this.finalNorm, attributes );
+		collectLogitWeights( this.logits, attributes );
+		return attributes;
+
+	}
+
+	prepare( renderer: Renderer ) {
+
+		if ( this._releasedCPUWeights ) return;
+
+		if ( uploadAndReleaseStaticWeights( renderer, this.computeNodes, this.collectStaticWeightAttributes() ) === false ) return;
+
+		this.weights.releaseCheckpointTensors();
+		this.weights.releaseUnpackedWeightArrays();
+		this._releasedCPUWeights = true;
+
+	}
+
 	async generate( renderer: Renderer, prompt: string, options: GenerateOptions = {} ): Promise<GenerationResult> {
 
+		this.prepare( renderer );
 		return generateAsync( this, prompt, options, {
 			rewindable: true,
 			resetCache: () => this.resetCache(),

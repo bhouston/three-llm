@@ -23,14 +23,14 @@ import {
   softmax,
   splitHeadGate,
 } from './runtime/math.js';
-import { bfloat16ToFloat32, convertAllTensors, float16ToFloat32, tensorToFloat32 } from './load/tensors.js';
+import { bfloat16ToFloat32, convertAllTensors, copyTensorRow, float16ToFloat32, isEmbeddingTensorName, isolateTensorData, tensorToFloat32 } from './load/tensors.js';
 import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG } from './catalog.js';
 import { QwenWeights } from './qwen/QwenWeights.js';
 import { QwenTSLRunner } from './qwen/QwenTSLRunner.js';
 import { parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
 import { resolveTensor } from './load/TensorNameMap.js';
 import { UnigramTokenizer } from './load/UnigramTokenizer.js';
-import { closeArray, createTinyQwenWeights } from './test/helpers.js';
+import { closeArray, createTinyLlama, createTinyQwenWeights } from './test/helpers.js';
 import type { TensorMap } from './types.js';
 
 function createSafeTensorsFixture(dtype: 'F32' | 'F16' = 'F32', values: number[] = [1, 2, 3, 4]) {
@@ -316,6 +316,53 @@ describe('tensors', () => {
     expect(Math.abs((small.data as Float32Array)[1]! - 2)).toBeLessThan(1e-6);
     expect(tensors.left?.dtype).toBe('F32');
     expect(messages.some((message) => message.includes('Converting BF16'))).toBe(true);
+  });
+
+  it('skips embedding tensors during conversion and copies one row at a time', async () => {
+    expect(isEmbeddingTensorName('model.embed_tokens.weight')).toBe(true);
+    expect(isEmbeddingTensorName('transformer.wte.weight')).toBe(true);
+    expect(isEmbeddingTensorName('model.layers.0.mlp.up_proj.weight')).toBe(false);
+
+    const tensors: TensorMap = {
+      'model.embed_tokens.weight': {
+        name: 'model.embed_tokens.weight',
+        dtype: 'BF16',
+        shape: [2, 2],
+        data: new Uint16Array([0x3f80, 0x4000, 0x4040, 0x4080]),
+      },
+      other: { name: 'other', dtype: 'BF16', shape: [1], data: new Uint16Array([0x3f80]) },
+    };
+    const count = await convertAllTensors(tensors, undefined, 'Test', isEmbeddingTensorName);
+    expect(count).toBe(1);
+    expect(tensors['model.embed_tokens.weight']?.dtype).toBe('BF16');
+    expect(tensors.other?.dtype).toBe('F32');
+
+    const row = new Float32Array(2);
+    copyTensorRow(tensors['model.embed_tokens.weight']!, 2, 2, row);
+    closeArray(row, new Float32Array([3, 4]), 1e-5);
+  });
+
+  it('isolates a view into its own buffer', () => {
+    const buffer = new ArrayBuffer(16);
+    new Float32Array(buffer).set([1, 2, 3, 4]);
+    const tensor = {
+      name: 'view',
+      dtype: 'F32',
+      shape: [2],
+      data: new Float32Array(buffer, 8, 2),
+    };
+    isolateTensorData(tensor);
+    expect(tensor.data.byteOffset).toBe(0);
+    expect(Array.from(tensor.data as Float32Array)).toEqual([3, 4]);
+  });
+
+  it('keeps CPU embeddings after releasing unpacked checkpoint tensors', () => {
+    const weights = createTinyLlama();
+    const before = weights.embedding(1, 0);
+    expect(weights.tensors['model.layers.0.self_attn.q_proj.weight']).toBeDefined();
+    weights.releaseCheckpointTensors();
+    expect(weights.tensors['model.layers.0.self_attn.q_proj.weight']).toBeUndefined();
+    closeArray(weights.embedding(1, 0), before, 1e-6);
   });
 });
 

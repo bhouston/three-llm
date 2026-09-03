@@ -13,6 +13,10 @@ import { createChunkedLogitLayers, createLogitSampler, readChunkedLogits, TSLLog
 import type { LogitChunk } from '../tsl/TSLLogits.js';
 import { TSLRMSNorm } from '../tsl/TSLRMSNorm.js';
 import { TSLSplitHeadGate } from '../tsl/TSLSplitHeadGate.js';
+import {
+	collectAttentionWeights, collectGatedDeltaWeights, collectLinearWeights, collectLogitWeights, collectMlpWeights,
+	collectNormWeights, uploadAndReleaseStaticWeights
+} from '../tsl/releaseCPU.js';
 import { QwenWeights } from './QwenWeights.js';
 import type {
 	ComputeNode, GenerateOptions, GenerationResult, LoaderOptions, Renderer, RunnerOptions, SampleOptions, TslNode
@@ -76,6 +80,7 @@ class QwenTSLRunner {
 	prefillComputeNodes: ComputeNode[];
 	_cacheTokens?: number[];
 	_cacheLogits?: Float32Array | null;
+	_releasedCPUWeights: boolean;
 
 	constructor( weights: QwenWeights, options: RunnerOptions = {} ) {
 
@@ -225,6 +230,7 @@ class QwenTSLRunner {
 			workgroupSize: this.workgroupSize
 		} );
 		this.logits = createChunkedLogitLayers( this.finalNorm.outputNode, weights, this.logitChunkSize, 'QwenLogits' );
+		weights.logitWeight = null;
 		this.logitSampler = createLogitSampler( this.logits, {
 			candidateCount: options.logitCandidateCount || 8,
 			name: 'QwenLogits'
@@ -241,6 +247,8 @@ class QwenTSLRunner {
 
 		this.prefillComputeNodes = this.computeNodes.slice();
 		this.computeNodes.push( ...orderedComputeNodes( this.finalNorm, ...this.logits.map( ( logit ) => logit.layer ) ) );
+		this.weights.releaseCheckpointTensors();
+		this._releasedCPUWeights = false;
 
 	}
 
@@ -324,6 +332,7 @@ class QwenTSLRunner {
 		renderer.compute( computeLogits
 			? ( sampleCandidateCount > 0 ? this.sampleComputeNodes( sampleCandidateCount ) : this.computeNodes )
 			: this.prefillComputeNodes );
+		this.prepare( renderer );
 
 	}
 
@@ -348,6 +357,7 @@ class QwenTSLRunner {
 			this.prefillCursorAttribute.needsUpdate = true;
 			this.setPosition( offset );
 			renderer.compute( this.prefillChunkComputeNodes( count ) );
+			this.prepare( renderer );
 			if ( onProgress ) await onProgress( offset + count );
 
 		}
@@ -385,8 +395,54 @@ class QwenTSLRunner {
 
 	}
 
+	collectStaticWeightAttributes() {
+
+		const attributes: StorageBufferAttribute[] = [];
+
+		for ( const layer of this.layers ) {
+
+			collectNormWeights( layer.ln1, attributes );
+
+			if ( layer.layerType === 'linear_attention' ) {
+
+				collectGatedDeltaWeights( layer.mixer as TSLGatedDeltaNet, attributes );
+
+			} else {
+
+				const mixer = layer.mixer as FullAttentionMixer;
+				collectLinearWeights( mixer.qGate, attributes );
+				collectLinearWeights( mixer.kv, attributes );
+				collectAttentionWeights( mixer.attention, attributes );
+				collectLinearWeights( mixer.attnProj, attributes );
+
+			}
+
+			collectNormWeights( layer.ln2, attributes );
+			collectMlpWeights( layer.mlp, attributes );
+
+		}
+
+		collectNormWeights( this.finalNorm, attributes );
+		collectLogitWeights( this.logits, attributes );
+		return attributes;
+
+	}
+
+	prepare( renderer: Renderer ) {
+
+		if ( this._releasedCPUWeights ) return;
+
+		if ( uploadAndReleaseStaticWeights( renderer, this.computeNodes, this.collectStaticWeightAttributes() ) === false ) return;
+
+		this.weights.releaseCheckpointTensors();
+		this.weights.releaseUnpackedWeightArrays();
+		this._releasedCPUWeights = true;
+
+	}
+
 	async generate( renderer: Renderer, prompt: string, options: GenerateOptions = {} ): Promise<GenerationResult> {
 
+		this.prepare( renderer );
 		return generateAsync( this, prompt, options, {
 			rewindable: false,
 			resetCache: () => this.resetCache(),

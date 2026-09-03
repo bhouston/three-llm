@@ -1,6 +1,6 @@
 import { GPT2Tokenizer, QWEN_TOKEN_PATTERN } from './GPT2Tokenizer.js';
 import { architectureFor, recipeFor } from './DecoderRecipe.js';
-import { convertAllTensors, createProgress, detectLanguagePrefix, fetchJSON, unwrapTextConfig } from './tensors.js';
+import { convertAllTensors, createProgress, detectLanguagePrefix, fetchJSON, isEmbeddingTensorName, isolateEmbeddingTensors, unwrapTextConfig } from './tensors.js';
 import { loadSafetensorsModel } from './SafeTensorsLoader.js';
 import { UnigramTokenizer } from './UnigramTokenizer.js';
 import type {
@@ -98,7 +98,8 @@ async function loadHFModelBundle(baseURL: string, options: LoaderOptions = {}): 
     label: options.label || 'HFModelBundle',
     keepTensor: recipe.keepTensor || options.keepTensor,
   });
-  await convertAllTensors(tensors, options.onProgress, options.label || 'HFModelBundle');
+  isolateEmbeddingTensors(tensors);
+  await convertAllTensors(tensors, options.onProgress, options.label || 'HFModelBundle', isEmbeddingTensorName);
 
   return {
     root,

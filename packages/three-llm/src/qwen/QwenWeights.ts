@@ -1,10 +1,10 @@
 import { detectPrefix, loadHFModelBundle } from '../load/HFModelBundle.js';
-import { packProjections, prepareGeneration, tensorToFloat32, transpose2D, unwrapTextConfig, createProgress } from '../load/tensors.js';
+import { packProjections, prepareGeneration, tensorToFloat32, transpose2D, unwrapTextConfig, createProgress, copyTensorRow, releaseBlockWeightArrays } from '../load/tensors.js';
 import { resolveTensor } from '../load/TensorNameMap.js';
 import { recipeFor } from '../load/DecoderRecipe.js';
 import type {
 	Architecture, ChatMessage, DecoderBlock, DecoderRecipe, FormatChatOptions, HFModelBundle,
-	HuggingFaceConfig, LoaderOptions, PreparedGeneration, ProgressCallback, TensorMap, Tokenizer
+	HuggingFaceConfig, LoaderOptions, PreparedGeneration, ProgressCallback, Tensor, TensorMap, Tokenizer
 } from '../types.js';
 
 /**
@@ -48,6 +48,7 @@ class QwenWeights {
 	endOfTextTokenId: number;
 	stopTokenIds: number[];
 	_float32: Map<string, Float32Array>;
+	_tokenEmbed: Tensor | null;
 	logitWeight: Float32Array | null;
 	outputNormWeight: Float32Array | null;
 	_blocks: DecoderBlock[];
@@ -86,6 +87,7 @@ class QwenWeights {
 		this.endOfTextTokenId = this.recipe.endOfTextTokenId ?? tokenizer.endOfTextTokenId ?? 248044;
 		this.stopTokenIds = [ this.endOfTextTokenId ];
 		this._float32 = new Map();
+		this._tokenEmbed = null;
 
 		const imEndTokenId = tokenizer.encoder?.[ '<|im_end|>' ];
 
@@ -163,6 +165,7 @@ class QwenWeights {
 
 	unpackSync(): void {
 
+		this.captureEmbeddings();
 		this.logitWeight = this.loadOutputWeight();
 		this.outputNormWeight = this.mappedFloat( 'output_norm' );
 		for ( let i = 0; i < this.layerCount; i ++ ) this._blocks[ i ] = this.createBlock( i );
@@ -173,6 +176,7 @@ class QwenWeights {
 
 		const report = createProgress( 'QwenWeights', onProgress );
 		await report( `Transposing output projection (${ this.vocabSize } x ${ this.hiddenSize }); UI may pause...` );
+		this.captureEmbeddings();
 		this.logitWeight = this.loadOutputWeight();
 		this.outputNormWeight = this.mappedFloat( 'output_norm' );
 
@@ -201,6 +205,12 @@ class QwenWeights {
 
 	}
 
+	captureEmbeddings(): void {
+
+		this._tokenEmbed = resolveTensor( this.tensors, this.tensorPrefix, 'qwen3_5', 'token_embd' );
+
+	}
+
 	tensor( name: string ): Float32Array {
 
 		if ( this._float32.has( name ) ) return this._float32.get( name )!;
@@ -221,16 +231,20 @@ class QwenWeights {
 
 	linearMapped( key: string, bid: number, outFeatures: number, inFeatures: number ): Float32Array {
 
-		return transpose2D( this.mappedFloat( key, bid ), outFeatures, inFeatures );
+		const transposed = transpose2D( this.mappedFloat( key, bid ), outFeatures, inFeatures );
+		this._float32.delete( `${ key }.${ bid }` );
+		return transposed;
 
 	}
 
 	loadOutputWeight(): Float32Array {
 
-		const source = this.hasTensor( 'lm_head.weight' ) && this.config.tie_word_embeddings !== true
-			? this.mappedFloat( 'output' )
-			: this.mappedFloat( 'token_embd' );
-		return transpose2D( source, this.vocabSize, this.hiddenSize );
+		const useUntiedHead = this.hasTensor( 'lm_head.weight' ) && this.config.tie_word_embeddings !== true;
+		const sourceKey = useUntiedHead ? 'output' : 'token_embd';
+		const source = this.mappedFloat( sourceKey );
+		const weight = transpose2D( source, this.vocabSize, this.hiddenSize );
+		this._float32.delete( sourceKey );
+		return weight;
 
 	}
 
@@ -274,8 +288,6 @@ class QwenWeights {
 			const k = this.linearMapped( 'attn_k', index, this.kvSize, hiddenSize );
 			const v = this.linearMapped( 'attn_v', index, this.kvSize, hiddenSize );
 			block.qGateWeight = qGate;
-			block.kWeight = k;
-			block.vWeight = v;
 			block.attnQKVWeight = packProjections( [ k, v ], hiddenSize );
 			block.attnProjWeight = this.linearMapped( 'attn_out', index, hiddenSize, this.qSize );
 			block.qNormWeight = this.mappedFloat( 'attn_q_norm', index );
@@ -289,10 +301,33 @@ class QwenWeights {
 
 	embedding( tokenId: number, _position: number, target: Float32Array<ArrayBufferLike> = new Float32Array( this.hiddenSize ) ): Float32Array {
 
-		const tokenEmbedding = this.mappedFloat( 'token_embd' );
-		const tokenOffset = tokenId * this.hiddenSize;
-		target.set( tokenEmbedding.subarray( tokenOffset, tokenOffset + this.hiddenSize ) );
-		return target;
+		const tokenEmbedding = this._tokenEmbed || resolveTensor( this.tensors, this.tensorPrefix, 'qwen3_5', 'token_embd' );
+		return copyTensorRow( tokenEmbedding, tokenId * this.hiddenSize, this.hiddenSize, target );
+
+	}
+
+	releaseCheckpointTensors(): void {
+
+		const keep = new Set<Tensor>();
+		if ( this._tokenEmbed ) keep.add( this._tokenEmbed );
+
+		for ( const name of Object.keys( this.tensors ) ) {
+
+			if ( keep.has( this.tensors[ name ] ) === false ) delete this.tensors[ name ];
+
+		}
+
+		this._float32.clear();
+
+	}
+
+	releaseUnpackedWeightArrays(): void {
+
+		this.logitWeight = null;
+		this.outputNormWeight = null;
+		this._float32.clear();
+
+		for ( const block of this._blocks ) releaseBlockWeightArrays( block );
 
 	}
 

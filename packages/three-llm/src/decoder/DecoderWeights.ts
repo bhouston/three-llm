@@ -1,6 +1,6 @@
 import { architectureFor, recipeFor } from '../load/DecoderRecipe.js';
 import { detectPrefix, loadHFModelBundle } from '../load/HFModelBundle.js';
-import { createProgress, packBiases, packProjections, prepareGeneration, tensorToFloat32, transpose2D, unwrapTextConfig } from '../load/tensors.js';
+import { copyTensorRow, createProgress, packBiases, packProjections, prepareGeneration, releaseBlockWeightArrays, tensorToFloat32, transpose2D, unwrapTextConfig } from '../load/tensors.js';
 import { hasMappedTensor, resolveTensor } from '../load/TensorNameMap.js';
 import type {
 	Architecture, DecoderBlock, DecoderRecipe, HFModelBundle, HuggingFaceConfig, LoaderOptions,
@@ -44,6 +44,8 @@ class DecoderWeights {
 	layerTypes?: string[];
 	endOfTextTokenId: number;
 	_float32: Map<string, Float32Array>;
+	_tokenEmbed: Tensor | null;
+	_posEmbed: Tensor | null;
 	logitWeight: Float32Array | null;
 	outputNormWeight: Float32Array | null;
 	outputNormBias: Float32Array | null;
@@ -90,6 +92,8 @@ class DecoderWeights {
 		this.endOfTextTokenId = endOfTextTokenId;
 
 		this._float32 = new Map();
+		this._tokenEmbed = null;
+		this._posEmbed = null;
 		this.logitWeight = null;
 		this.outputNormWeight = null;
 		this.outputNormBias = null;
@@ -132,6 +136,7 @@ class DecoderWeights {
 
 	unpackSync(): void {
 
+		this.captureEmbeddings();
 		this.logitWeight = this.loadOutputWeight();
 		this.outputNormWeight = this.mappedFloat( 'output_norm' );
 		this.outputNormBias = this.hasMapped( 'output_norm_bias' ) ? this.mappedFloat( 'output_norm_bias' ) : null;
@@ -144,6 +149,7 @@ class DecoderWeights {
 
 		const report = createProgress( 'DecoderWeights', onProgress );
 		await report( `Transposing output projection (${ this.vocabSize } x ${ this.hiddenSize }); UI may pause...` );
+		this.captureEmbeddings();
 		this.logitWeight = this.loadOutputWeight();
 		this.outputNormWeight = this.mappedFloat( 'output_norm' );
 		this.outputNormBias = this.hasMapped( 'output_norm_bias' ) ? this.mappedFloat( 'output_norm_bias' ) : null;
@@ -187,6 +193,13 @@ class DecoderWeights {
 
 	}
 
+	captureEmbeddings(): void {
+
+		this._tokenEmbed = this.mappedTensor( 'token_embd' );
+		this._posEmbed = this.hasMapped( 'pos_embd' ) ? this.mappedTensor( 'pos_embd' ) : null;
+
+	}
+
 	tensor( name: string, unprefixed = false ): Float32Array {
 
 		const key = unprefixed ? name : `${ this.tensorPrefix }${ name }`;
@@ -209,8 +222,18 @@ class DecoderWeights {
 
 	linearMapped( key: string, bid: number, outFeatures: number, inFeatures: number ): Float32Array {
 
+		const cacheKey = `${ key }.${ bid }`;
 		const data = this.mappedFloat( key, bid );
-		return this.recipe.transposeLinears ? transpose2D( data, outFeatures, inFeatures ) : data;
+
+		if ( this.recipe.transposeLinears ) {
+
+			const transposed = transpose2D( data, outFeatures, inFeatures );
+			this._float32.delete( cacheKey );
+			return transposed;
+
+		}
+
+		return data;
 
 	}
 
@@ -227,8 +250,11 @@ class DecoderWeights {
 		const useUntiedHead = this.architecture !== 'gpt2'
 			&& this.hasTensor( 'lm_head.weight' )
 			&& this.config.tie_word_embeddings !== true;
-		const source = useUntiedHead ? this.mappedFloat( 'output' ) : this.mappedFloat( 'token_embd' );
-		return transpose2D( source, this.vocabSize, this.hiddenSize );
+		const sourceKey = useUntiedHead ? 'output' : 'token_embd';
+		const source = this.mappedFloat( sourceKey );
+		const weight = transpose2D( source, this.vocabSize, this.hiddenSize );
+		this._float32.delete( sourceKey );
+		return weight;
 
 	}
 
@@ -340,29 +366,27 @@ class DecoderWeights {
 
 	embedding( tokenId: number, position: number, target: Float32Array<ArrayBufferLike> = new Float32Array( this.hiddenSize ) ): Float32Array {
 
-		const tokenEmbedding = this.mappedFloat( 'token_embd' );
+		const tokenEmbedding = this._tokenEmbed || this.mappedTensor( 'token_embd' );
 		const tokenOffset = tokenId * this.hiddenSize;
 
 		if ( this.recipe.position === 'learned' ) {
 
-			const positionEmbedding = this.mappedFloat( 'pos_embd' );
+			copyTensorRow( tokenEmbedding, tokenOffset, this.hiddenSize, target );
+			const positionEmbedding = this._posEmbed || this.mappedTensor( 'pos_embd' );
 			const positionOffset = position * this.hiddenSize;
+			const positionData = positionEmbedding.data;
 
-			for ( let i = 0; i < this.hiddenSize; i ++ ) {
+			if ( positionEmbedding.dtype === 'F32' ) {
 
-				target[ i ] = tokenEmbedding[ tokenOffset + i ] + positionEmbedding[ positionOffset + i ];
+				const data = positionData as Float32Array;
 
-			}
+				for ( let i = 0; i < this.hiddenSize; i ++ ) target[ i ] += data[ positionOffset + i ];
 
-			return target;
+			} else {
 
-		}
-
-		if ( this.embedScale !== 1 ) {
-
-			for ( let i = 0; i < this.hiddenSize; i ++ ) {
-
-				target[ i ] = tokenEmbedding[ tokenOffset + i ] * this.embedScale;
+				const scratch = new Float32Array( this.hiddenSize );
+				copyTensorRow( positionEmbedding, positionOffset, this.hiddenSize, scratch );
+				for ( let i = 0; i < this.hiddenSize; i ++ ) target[ i ] += scratch[ i ];
 
 			}
 
@@ -370,8 +394,34 @@ class DecoderWeights {
 
 		}
 
-		target.set( tokenEmbedding.subarray( tokenOffset, tokenOffset + this.hiddenSize ) );
-		return target;
+		return copyTensorRow( tokenEmbedding, tokenOffset, this.hiddenSize, target, this.embedScale );
+
+	}
+
+	releaseCheckpointTensors(): void {
+
+		const keep = new Set<Tensor>();
+		if ( this._tokenEmbed ) keep.add( this._tokenEmbed );
+		if ( this._posEmbed ) keep.add( this._posEmbed );
+
+		for ( const name of Object.keys( this.tensors ) ) {
+
+			if ( keep.has( this.tensors[ name ] ) === false ) delete this.tensors[ name ];
+
+		}
+
+		this._float32.clear();
+
+	}
+
+	releaseUnpackedWeightArrays(): void {
+
+		this.logitWeight = null;
+		this.outputNormWeight = null;
+		this.outputNormBias = null;
+		this._float32.clear();
+
+		for ( const block of this._blocks ) releaseBlockWeightArrays( block );
 
 	}
 

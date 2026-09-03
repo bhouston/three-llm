@@ -51,22 +51,26 @@ function readHeaderLength( view: DataView ): number {
 
 function createTensorArray( buffer: ArrayBuffer, byteOffset: number, byteLength: number, dtype: string ): Tensor['data'] {
 
-	const alignedBuffer = buffer.slice( byteOffset, byteOffset + byteLength );
+	const bytesPerElement = DTYPE_BYTES[ dtype ];
+	const canView = bytesPerElement !== undefined && byteOffset % bytesPerElement === 0;
+	const source = canView ? buffer : buffer.slice( byteOffset, byteOffset + byteLength );
+	const offset = canView ? byteOffset : 0;
+	const count = byteLength / bytesPerElement;
 
 	switch ( dtype ) {
 
 		case 'F32':
-			return new Float32Array( alignedBuffer );
+			return new Float32Array( source, offset, count );
 		case 'F16':
 		case 'BF16':
-			return new Uint16Array( alignedBuffer );
+			return new Uint16Array( source, offset, count );
 		case 'I32':
-			return new Int32Array( alignedBuffer );
+			return new Int32Array( source, offset, count );
 		case 'I64':
-			return new BigInt64Array( alignedBuffer );
+			return new BigInt64Array( source, offset, count );
 		case 'U8':
 		case 'BOOL':
-			return new Uint8Array( alignedBuffer );
+			return new Uint8Array( source, offset, count );
 		default:
 			throw new Error( `SafeTensorsLoader: Unsupported dtype "${ dtype }".` );
 

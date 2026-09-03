@@ -31,6 +31,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 type TslRunner = {
   maxTokens: number;
   generate: (renderer: unknown, prompt: string, options: GenerateOptions) => Promise<GenerationResult>;
+  prepare?: (renderer: unknown) => void;
   resetCache: () => void;
   weights: {
     architecture: string;
@@ -50,7 +51,16 @@ function NpmIcon(props: React.SVGProps<SVGSVGElement>) {
 }
 
 const DEFAULT_MAX_NEW_TOKENS = 1024;
+const MOBILE_MAX_TOKENS = 1024;
 const DRAFT_FLUSH_MS = 1000;
+
+function isConstrainedDevice() {
+  if (typeof navigator === 'undefined') return false;
+  const nav = navigator as Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } };
+  if (nav.userAgentData?.mobile === true) return true;
+  if (nav.deviceMemory !== undefined && nav.deviceMemory <= 4) return true;
+  return /Mobi|Android|iPhone|iPad/i.test(nav.userAgent);
+}
 
 function ChatBubble({ turn, streaming = false }: { turn: ChatTurn; streaming?: boolean }) {
   const isUser = turn.role === 'user';
@@ -206,6 +216,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
         const runner = (await createTSLRunner(modelURL, {
           prefillChunkSize: 4,
+          maxTokens: isConstrainedDevice() ? MOBILE_MAX_TOKENS : undefined,
           onProgress: (message) => {
             if (!cancelled) setStatus(message);
           },
@@ -216,6 +227,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
           renderer.dispose();
           return;
         }
+
+        runner.prepare?.(renderer);
 
         runnerRef.current = runner;
         setArchitecture(runner.weights.architecture);
