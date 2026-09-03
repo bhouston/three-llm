@@ -3,16 +3,16 @@
   "version": "0.1.0",
   "description": "Browser LLM inference on WebGPU using Three.js TSL compute shaders.",
   "keywords": [
-    "llm",
-    "webgpu",
-    "three.js",
-    "tsl",
     "gpt2",
+    "inference",
+    "llm",
+    "phi",
     "qwen",
     "smollm",
-    "phi",
-    "inference",
-    "typescript"
+    "three.js",
+    "tsl",
+    "typescript",
+    "webgpu"
   ],
   "homepage": "https://github.com/bhouston/three-llm",
   "bugs": {
@@ -25,7 +25,9 @@
     "url": "git+https://github.com/bhouston/three-llm.git",
     "directory": "packages/three-llm"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
@@ -44,6 +46,9 @@
     "build": "tsc",
     "dev": "tsc -w --preserveWatchOutput --noEmitOnError",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "p-limit": "^7.3.2"
   },
   "devDependencies": {
     "@types/three": "^0.185.0",

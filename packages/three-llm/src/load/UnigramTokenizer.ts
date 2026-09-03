@@ -1,4 +1,4 @@
-import { createProgress } from './tensors.js';
+import { createProgress, fetchJSON } from './tensors.js';
 import type { LoaderOptions, Tokenizer } from '../types.js';
 
 interface TrieNode {
@@ -126,25 +126,22 @@ class UnigramTokenizer implements Tokenizer {
     const report = createProgress('UnigramTokenizer', options.onProgress);
 
     await report('Fetching tokenizer.json');
-    const tokenizerResponse = await fetch(`${root}tokenizer.json`);
-
-    if (tokenizerResponse.ok === false) {
-      throw new Error(
-        `UnigramTokenizer: Failed to load "${root}tokenizer.json" (${tokenizerResponse.status} ${tokenizerResponse.statusText})`,
-      );
-    }
-
-    await report(`Parsing tokenizer.json (${tokenizerResponse.headers.get('Content-Length') || 'unknown size'})`);
-    const tokenizerJSON = (await tokenizerResponse.json()) as TokenizerJSON;
+    const tokenizerJSON = await fetchJSON<TokenizerJSON>(
+      `${root}tokenizer.json`,
+      'UnigramTokenizer',
+      options.onProgress,
+    );
 
     let tokenizerConfig: TokenizerConfig = options.tokenizerConfig || {};
 
     try {
-      const configResponse = await fetch(`${root}tokenizer_config.json`);
-      if (configResponse.ok) {
-        await report('Parsing tokenizer_config.json');
-        tokenizerConfig = { ...((await configResponse.json()) as TokenizerConfig), ...tokenizerConfig };
-      }
+      const loadedConfig = await fetchJSON<TokenizerConfig>(
+        `${root}tokenizer_config.json`,
+        'UnigramTokenizer',
+        options.onProgress,
+      );
+      await report('Parsing tokenizer_config.json');
+      tokenizerConfig = { ...loadedConfig, ...tokenizerConfig };
     } catch {
       // tokenizer_config.json is optional.
     }

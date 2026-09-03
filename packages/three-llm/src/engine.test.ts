@@ -23,7 +23,17 @@ import {
   softmax,
   splitHeadGate,
 } from './runtime/math.js';
-import { bfloat16ToFloat32, convertAllTensors, copyTensorRow, float16ToFloat32, isEmbeddingTensorName, isolateTensorData, rewriteGoogleStorageURL, tensorToFloat32 } from './load/tensors.js';
+import {
+  bfloat16ToFloat32,
+  convertAllTensors,
+  copyTensorRow,
+  fetchArrayBuffer,
+  float16ToFloat32,
+  isEmbeddingTensorName,
+  isolateTensorData,
+  rewriteGoogleStorageURL,
+  tensorToFloat32,
+} from './load/tensors.js';
 import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG } from './catalog.js';
 import { QwenWeights } from './qwen/QwenWeights.js';
 import { QwenTSLRunner } from './qwen/QwenTSLRunner.js';
@@ -67,7 +77,7 @@ describe('MODEL_CATALOG', () => {
     expect(ids).toContain(DEFAULT_MODEL_ID);
     for (const entry of MODEL_CATALOG) {
       expect(entry.url).toMatch(/^https:\/\/huggingface\.co\//);
-      expect(entry.localUrl).toMatch(/^https:\/\/storage\.googleapis\.com\/three-llm\//);
+      expect(entry.localUrl).toMatch(/^\/api\/models\//);
       expect(entry.sizeHint).toMatch(/^\d+(\.\d+)? (MB|GB)$/);
       expect(catalogLabel(entry)).toContain(`[${entry.sizeHint}]`);
     }
@@ -85,6 +95,74 @@ describe('rewriteGoogleStorageURL', () => {
     expect(rewriteGoogleStorageURL('https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors')).toBe(
       'https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors',
     );
+  });
+});
+
+describe('fetchArrayBuffer', () => {
+  it('retries incomplete downloads', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+
+    globalThis.fetch = (async () => {
+      calls++;
+      const body = calls === 1 ? new Uint8Array([1]) : new Uint8Array([1, 2]);
+      return new Response(body, { headers: { 'Content-Length': '2' } });
+    }) as typeof fetch;
+
+    try {
+      const buffer = await fetchArrayBuffer('https://example.test/model.safetensors', 'Test');
+      expect(Array.from(new Uint8Array(buffer))).toEqual([1, 2]);
+      expect(calls).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('downloads large same-origin model files as virtual chunks', async () => {
+    const originalFetch = globalThis.fetch;
+    const total = 30 * 1024 * 1024 + 3;
+    const requested: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+
+      if (init?.method === 'HEAD') {
+        return new Response(null, { headers: { 'Content-Length': String(total) } });
+      }
+
+      const parsed = new URL(url, 'http://localhost');
+      const part = parsed.searchParams.get('part');
+
+      if (part === '0') {
+        return new Response(new Uint8Array(30 * 1024 * 1024).fill(1), {
+          headers: { 'Content-Length': String(30 * 1024 * 1024) },
+        });
+      }
+
+      if (part === '1') {
+        return new Response(new Uint8Array([2, 3, 4]), { headers: { 'Content-Length': '3' } });
+      }
+
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const buffer = await fetchArrayBuffer('/api/models/gpt2/model.safetensors', 'Test');
+      const bytes = new Uint8Array(buffer);
+
+      expect(bytes.byteLength).toBe(total);
+      expect(bytes[0]).toBe(1);
+      expect(bytes[30 * 1024 * 1024]).toBe(2);
+      expect(bytes[total - 1]).toBe(4);
+      expect(requested).toEqual([
+        'HEAD /api/models/gpt2/model.safetensors',
+        'GET /api/models/gpt2/model.safetensors?part=0&partSize=31457280',
+        'GET /api/models/gpt2/model.safetensors?part=1&partSize=31457280',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
@@ -534,7 +612,9 @@ describe('generate', () => {
       {
         temperature: 0,
         topK: 1,
-        onPrefillProgress: (event) => progress.push(event.completedPromptTokens!),
+        onPrefillProgress: (event) => {
+          progress.push(event.completedPromptTokens!);
+        },
       },
       {
         rewindable: true,
