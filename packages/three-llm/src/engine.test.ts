@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { architectureFor, recipeFor } from './DecoderRecipe.js';
-import { GPT2Tokenizer } from './GPT2Tokenizer.js';
-import { generateSync, planPromptCache, prepareGenerationFromTokens, sharedPrefixLength } from './LLMGenerate.js';
+import { architectureFor, recipeFor } from './load/DecoderRecipe.js';
+import { GPT2Tokenizer } from './load/GPT2Tokenizer.js';
+import { generateSync, planPromptCache, prepareGenerationFromTokens, sharedPrefixLength } from './runtime/generate.js';
 import {
   applyRoPE,
   geluNew,
@@ -14,13 +14,13 @@ import {
   silu,
   softmax,
   splitHeadGate,
-} from './LLMMath.js';
-import { bfloat16ToFloat32, convertAllTensors, float16ToFloat32, tensorToFloat32 } from './LLMTensors.js';
+} from './runtime/math.js';
+import { bfloat16ToFloat32, convertAllTensors, float16ToFloat32, tensorToFloat32 } from './load/tensors.js';
 import { MODEL_CATALOG } from './catalog.js';
-import { QwenWeights } from './QwenWeights.js';
-import { parseSafeTensors, resolveSafetensorFiles } from './SafeTensorsLoader.js';
-import { resolveTensor } from './TensorNameMap.js';
-import { UnigramTokenizer } from './UnigramTokenizer.js';
+import { QwenWeights } from './qwen/QwenWeights.js';
+import { parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
+import { resolveTensor } from './load/TensorNameMap.js';
+import { UnigramTokenizer } from './load/UnigramTokenizer.js';
 import type { Tensor, TensorMap, Tokenizer } from './types.js';
 
 function closeArray(actual: ArrayLike<number>, expected: ArrayLike<number>, epsilon: number) {
@@ -199,7 +199,7 @@ describe('GPT2Tokenizer', () => {
   });
 });
 
-describe('LLMMath', () => {
+describe('math', () => {
   it('computes reference operations', () => {
     closeArray(
       linear(new Float32Array([1, 2]), new Float32Array([3, 4, 5, 6]), new Float32Array([7, 8]), 2, 2),
@@ -285,7 +285,7 @@ describe('LLMMath', () => {
   });
 });
 
-describe('LLMTensors', () => {
+describe('tensors', () => {
   it('converts BF16 tensors to F32 with progress', async () => {
     const tensors: TensorMap = {
       small: { name: 'small', dtype: 'BF16', shape: [2], data: new Uint16Array([0x3f80, 0x4000]) },
@@ -367,7 +367,7 @@ describe('DecoderRecipe', () => {
   });
 });
 
-describe('LLMGenerate', () => {
+describe('generate', () => {
   it('reuses a matching prompt cache prefix', () => {
     expect(sharedPrefixLength([1, 2, 3], [1, 2, 9])).toBe(2);
     expect(sharedPrefixLength([1, 2], [1, 2, 3])).toBe(2);
