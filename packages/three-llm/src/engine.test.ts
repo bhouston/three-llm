@@ -2,9 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import { architectureFor, recipeFor } from './load/DecoderRecipe.js';
 import { GPT2Tokenizer } from './load/GPT2Tokenizer.js';
-import { generateSync, planPromptCache, prepareGenerationFromTokens, sharedPrefixLength } from './runtime/generate.js';
+import {
+  generateAsync,
+  generateSync,
+  planPromptCache,
+  prepareGenerationFromTokens,
+  sharedPrefixLength,
+} from './runtime/generate.js';
+import { completionFollowUpText, formatCompletionPrompt, formatPrompt } from './runtime/conversation.js';
 import {
   applyRoPE,
+  gatedDeltaRuleStep,
   geluNew,
   layerNorm,
   linear,
@@ -18,17 +26,12 @@ import {
 import { bfloat16ToFloat32, convertAllTensors, float16ToFloat32, tensorToFloat32 } from './load/tensors.js';
 import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG } from './catalog.js';
 import { QwenWeights } from './qwen/QwenWeights.js';
+import { QwenTSLRunner } from './qwen/QwenTSLRunner.js';
 import { parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
 import { resolveTensor } from './load/TensorNameMap.js';
 import { UnigramTokenizer } from './load/UnigramTokenizer.js';
-import type { Tensor, TensorMap, Tokenizer } from './types.js';
-
-function closeArray(actual: ArrayLike<number>, expected: ArrayLike<number>, epsilon: number) {
-  expect(actual.length).toBe(expected.length);
-  for (let i = 0; i < expected.length; i++) {
-    expect(Math.abs(actual[i]! - expected[i]!)).toBeLessThanOrEqual(epsilon);
-  }
-}
+import { closeArray, createTinyQwenWeights } from './test/helpers.js';
+import type { TensorMap } from './types.js';
 
 function createSafeTensorsFixture(dtype: 'F32' | 'F16' = 'F32', values: number[] = [1, 2, 3, 4]) {
   const bytesPerElement = dtype === 'F32' ? 4 : 2;
@@ -53,28 +56,6 @@ function createSafeTensorsFixture(dtype: 'F32' | 'F16' = 'F32', values: number[]
   }
 
   return buffer;
-}
-
-function fillSin(array: Float32Array, seed: number) {
-  for (let i = 0; i < array.length; i++) array[i] = Math.sin(seed + i * 0.17) * 0.35;
-  return array;
-}
-
-function makeTensor(name: string, shape: number[], seed: number): Tensor {
-  const data = fillSin(new Float32Array(shape.reduce((product, value) => product * value, 1)), seed);
-  return { name, dtype: 'F32', shape, data };
-}
-
-function tinyTokenizer(): Tokenizer {
-  return {
-    endOfTextTokenId: 0,
-    encode() {
-      return [1, 2];
-    },
-    decode(ids) {
-      return ids.join(',');
-    },
-  };
 }
 
 describe('MODEL_CATALOG', () => {
@@ -215,13 +196,26 @@ describe('math', () => {
       new Float32Array([13, 16]),
       1e-6,
     );
+    closeArray(
+      linear(new Float32Array([1, 2]), new Float32Array([1, 0, 0, 1]), new Float32Array([0, 0]), 2, 2),
+      new Float32Array([1, 2]),
+      1e-6,
+    );
     closeArray(softmax(new Float32Array([1, 2, 3])), new Float32Array([0.09003057, 0.24472848, 0.66524094]), 1e-6);
+    closeArray(softmax(new Float32Array([1, 1, 1])), new Float32Array([1 / 3, 1 / 3, 1 / 3]), 1e-6);
+    closeArray(softmax(new Float32Array([100, 101, 102])), softmax(new Float32Array([0, 1, 2])), 1e-6);
+    const probabilities = softmax(new Float32Array([-5, 0, 2.5]));
+    expect(Array.from(probabilities).reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 6);
     expect(Math.abs(geluNew(0))).toBeLessThan(1e-6);
     expect(Math.abs(geluNew(1) - 0.84119199)).toBeLessThan(1e-6);
+    expect(Math.abs(geluNew(20) - 20)).toBeLessThan(1e-4);
+    expect(Math.abs(geluNew(-20))).toBeLessThan(1e-4);
     expect(sampleTopK(new Float32Array([1, 2, 3]), { topK: 1 })).toBe(2);
     expect(sampleTopK(new Float32Array([1, 4, 3]), { temperature: 0, topK: 40 })).toBe(1);
     expect(sampleTopK(new Float32Array([1, 2, 3, 4]), { topK: 2, temperature: 1, random: () => 0 })).toBe(3);
+    expect(sampleTopK(new Float32Array([1, 2, 3, 4]), { temperature: 1e-8, topK: 40, random: () => 0.5 })).toBe(3);
     expect(sampleTopK(new Float32Array([5, 4]), { temperature: 0, tokens: [0], repetitionPenalty: 2 })).toBe(1);
+    expect(sampleTopK(new Float32Array([3, 2, 1]), { temperature: 0, tokens: [0, 0], frequencyPenalty: 1 })).toBe(1);
     expect(
       sampleTopK(new Float32Array([0, 0, 10, 1]), {
         temperature: 0,
@@ -229,6 +223,7 @@ describe('math', () => {
         noRepeatNgramSize: 3,
       }),
     ).toBe(3);
+    expect(sampleTopK(new Float32Array([5, 4]), { temperature: 0, tokens: [0], repetitionPenalty: 1 })).toBe(0);
 
     const normalized = layerNorm(
       new Float32Array([1, 2, 3]),
@@ -241,6 +236,11 @@ describe('math', () => {
     const rms = rmsNorm(new Float32Array([1, 2, 3]), new Float32Array([1, 1, 1]));
     const invRms = 1 / Math.sqrt(14 / 3 + 1e-5);
     closeArray(rms, new Float32Array([invRms, 2 * invRms, 3 * invRms]), 1e-5);
+    closeArray(
+      rmsNorm(new Float32Array([1, 2, 3]), new Float32Array([0.5, 0, -0.25]), 1e-5, true),
+      new Float32Array([invRms * 1.5, 2 * invRms, 3 * invRms * 0.75]),
+      1e-5,
+    );
 
     expect(Math.abs(silu(0))).toBeLessThan(1e-6);
     expect(Math.abs(silu(1) - 0.731058578)).toBeLessThan(1e-6);
@@ -274,6 +274,17 @@ describe('math', () => {
     closeArray(split.query, new Float32Array([1, 3]), 1e-6);
     closeArray(split.gate, new Float32Array([2, 4]), 1e-6);
 
+    const deltaOut = gatedDeltaRuleStep(
+      new Float32Array([1, 0]),
+      new Float32Array([0, 1]),
+      new Float32Array([2, 3]),
+      new Float32Array([0.5]),
+      new Float32Array([1]),
+      new Float32Array(4),
+      { numVHeads: 1, keyDim: 2, valueDim: 2 },
+    );
+    expect(deltaOut.length).toBe(2);
+
     expect(Math.abs(float16ToFloat32(0x3c00) - 1)).toBeLessThan(1e-6);
     expect(Math.abs(bfloat16ToFloat32(0x3f80) - 1)).toBeLessThan(1e-6);
     expect(
@@ -299,9 +310,10 @@ describe('tensors', () => {
     const count = await convertAllTensors(tensors, (message) => messages.push(message), 'Test');
 
     expect(count).toBe(1);
-    expect(tensors.small?.dtype).toBe('F32');
-    expect(Math.abs((tensors.small?.data as Float32Array)[0]! - 1)).toBeLessThan(1e-6);
-    expect(Math.abs((tensors.small?.data as Float32Array)[1]! - 2)).toBeLessThan(1e-6);
+    const small = tensors.small!;
+    expect(small.dtype).toBe('F32');
+    expect(Math.abs((small.data as Float32Array)[0]! - 1)).toBeLessThan(1e-6);
+    expect(Math.abs((small.data as Float32Array)[1]! - 2)).toBeLessThan(1e-6);
     expect(tensors.left?.dtype).toBe('F32');
     expect(messages.some((message) => message.includes('Converting BF16'))).toBe(true);
   });
@@ -419,6 +431,55 @@ describe('generate', () => {
     expect(prepared.newTokenBudget).toBe(0);
     expect(requestedNewTokens).toBe(0);
   });
+
+  it('reports async prefill progress', async () => {
+    const progress: number[] = [];
+    const computed: number[][] = [];
+    const runner = {
+      maxTokens: 8,
+      weights: {
+        endOfTextTokenId: 0,
+        tokenizer: { decode: (tokens: number[]) => tokens.join(',') },
+        prepareGeneration() {
+          return { inputTokens: [1, 2, 3, 4], newTokenBudget: 1 };
+        },
+      },
+    };
+
+    const result = await generateAsync(
+      runner as never,
+      'prompt',
+      {
+        temperature: 0,
+        topK: 1,
+        onPrefillProgress: (event) => progress.push(event.completedPromptTokens!),
+      },
+      {
+        rewindable: true,
+        resetCache() {},
+        async prefillTokens(inputTokens, start, end, onProgress) {
+          expect(inputTokens).toEqual([1, 2, 3, 4]);
+          expect(start).toBe(0);
+          expect(end).toBe(3);
+          await onProgress(2);
+          await onProgress(3);
+        },
+        async computeToken(tokenId, position) {
+          computed.push([tokenId, position]);
+        },
+        async readLogits() {
+          return new Float32Array([0, 1]);
+        },
+      },
+    );
+
+    expect(progress).toEqual([2, 3, 4]);
+    expect(computed).toEqual([
+      [4, 3],
+      [1, 4],
+    ]);
+    expect(result.generatedTokens).toEqual([1]);
+  });
 });
 
 describe('UnigramTokenizer', () => {
@@ -482,82 +543,34 @@ describe('UnigramTokenizer', () => {
   });
 });
 
+describe('conversation prompt', () => {
+  it('feeds completion models the raw user text instead of a chat wrap', () => {
+    const prompt = 'Paris was beautiful in the fall.';
+    const turns = [{ role: 'user' as const, text: prompt }];
+    expect(formatPrompt({}, turns)).toBe(prompt);
+    expect(formatCompletionPrompt(turns)).toBe(prompt);
+    expect(
+      formatCompletionPrompt([
+        { role: 'user', text: prompt },
+        { role: 'assistant', text: '\n\n"I was in the middle' },
+        { role: 'user', text: 'She kept walking.' },
+      ]),
+    ).toBe(`${prompt}\n\n"I was in the middle\n\nShe kept walking.`);
+    expect(completionFollowUpText('She kept walking.')).toBe('\n\nShe kept walking.');
+    expect(formatPrompt({}, turns)).not.toContain('Assistant:');
+  });
+
+  it('keeps chat-template models on formatChat', () => {
+    const weights = createTinyQwenWeights();
+    expect(formatPrompt(weights, [{ role: 'user', text: 'Hi' }])).toBe(
+      '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n',
+    );
+  });
+});
+
 describe('QwenWeights', () => {
   it('formats chat with thinking disabled by default', () => {
-    const hidden = 8;
-    const inner = 8;
-    const heads = 2;
-    const kvHeads = 1;
-    const headDim = 4;
-    const layers = 2;
-    const vocab = 8;
-    const qSize = heads * headDim;
-    const kvSize = kvHeads * headDim;
-    const linHeads = 2;
-    const linDim = 4;
-    const kernel = 4;
-    const convDim = linHeads * linDim * 2 + linHeads * linDim;
-    const tensors: TensorMap = {
-      'model.language_model.embed_tokens.weight': makeTensor('embed', [vocab, hidden], 0.12),
-      'model.language_model.norm.weight': makeTensor('norm', [hidden], 1.12),
-    };
-
-    const linearPrefix = 'model.language_model.layers.0';
-    tensors[`${linearPrefix}.input_layernorm.weight`] = makeTensor('ln1', [hidden], 2.1);
-    tensors[`${linearPrefix}.post_attention_layernorm.weight`] = makeTensor('ln2', [hidden], 2.2);
-    tensors[`${linearPrefix}.mlp.gate_proj.weight`] = makeTensor('gate', [inner, hidden], 8.1);
-    tensors[`${linearPrefix}.mlp.up_proj.weight`] = makeTensor('up', [inner, hidden], 8.2);
-    tensors[`${linearPrefix}.mlp.down_proj.weight`] = makeTensor('down', [hidden, inner], 8.3);
-    tensors[`${linearPrefix}.linear_attn.in_proj_qkv.weight`] = makeTensor('dqkv', [convDim, hidden], 3.1);
-    tensors[`${linearPrefix}.linear_attn.in_proj_z.weight`] = makeTensor('dz', [linHeads * linDim, hidden], 3.2);
-    tensors[`${linearPrefix}.linear_attn.in_proj_b.weight`] = makeTensor('db', [linHeads, hidden], 3.3);
-    tensors[`${linearPrefix}.linear_attn.in_proj_a.weight`] = makeTensor('da', [linHeads, hidden], 3.4);
-    tensors[`${linearPrefix}.linear_attn.out_proj.weight`] = makeTensor('do', [hidden, linHeads * linDim], 3.5);
-    tensors[`${linearPrefix}.linear_attn.conv1d.weight`] = makeTensor('dc', [convDim, 1, kernel], 3.6);
-    tensors[`${linearPrefix}.linear_attn.A_log`] = makeTensor('alog', [linHeads], 0.4);
-    tensors[`${linearPrefix}.linear_attn.dt_bias`] = makeTensor('dt', [linHeads], 0.2);
-    tensors[`${linearPrefix}.linear_attn.norm.weight`] = makeTensor('dn', [linDim], 1.05);
-
-    const fullPrefix = 'model.language_model.layers.1';
-    tensors[`${fullPrefix}.input_layernorm.weight`] = makeTensor('fln1', [hidden], 2.3);
-    tensors[`${fullPrefix}.post_attention_layernorm.weight`] = makeTensor('fln2', [hidden], 2.4);
-    tensors[`${fullPrefix}.mlp.gate_proj.weight`] = makeTensor('fgate', [inner, hidden], 8.4);
-    tensors[`${fullPrefix}.mlp.up_proj.weight`] = makeTensor('fup', [inner, hidden], 8.5);
-    tensors[`${fullPrefix}.mlp.down_proj.weight`] = makeTensor('fdown', [hidden, inner], 8.6);
-    tensors[`${fullPrefix}.self_attn.q_proj.weight`] = makeTensor('q', [qSize * 2, hidden], 4.1);
-    tensors[`${fullPrefix}.self_attn.k_proj.weight`] = makeTensor('k', [kvSize, hidden], 4.2);
-    tensors[`${fullPrefix}.self_attn.v_proj.weight`] = makeTensor('v', [kvSize, hidden], 4.3);
-    tensors[`${fullPrefix}.self_attn.o_proj.weight`] = makeTensor('o', [hidden, qSize], 4.4);
-    tensors[`${fullPrefix}.self_attn.q_norm.weight`] = makeTensor('qn', [headDim], 0.3);
-    tensors[`${fullPrefix}.self_attn.k_norm.weight`] = makeTensor('kn', [headDim], 0.4);
-
-    const weights = new QwenWeights(
-      {
-        model_type: 'qwen3_5_text',
-        hidden_size: hidden,
-        intermediate_size: inner,
-        num_hidden_layers: layers,
-        num_attention_heads: heads,
-        num_key_value_heads: kvHeads,
-        head_dim: headDim,
-        vocab_size: vocab,
-        hidden_act: 'silu',
-        rms_norm_eps: 1e-6,
-        layer_types: ['linear_attention', 'full_attention'],
-        linear_conv_kernel_dim: kernel,
-        linear_key_head_dim: linDim,
-        linear_value_head_dim: linDim,
-        linear_num_key_heads: linHeads,
-        linear_num_value_heads: linHeads,
-        rope_parameters: { rope_theta: 10000, partial_rotary_factor: 0.5 },
-        tie_word_embeddings: true,
-        eos_token_id: 0,
-        max_position_embeddings: 16,
-      },
-      tensors,
-      tinyTokenizer(),
-    );
-
+    const weights = createTinyQwenWeights();
     const messages = [{ role: 'user' as const, text: 'Hi' }];
     expect(weights.formatChat(messages)).toBe(
       '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n',
@@ -565,5 +578,24 @@ describe('QwenWeights', () => {
     expect(weights.formatChat(messages, { enableThinking: true })).toBe(
       '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n',
     );
+  });
+
+  it('forwards loader options through QwenTSLRunner.fromURL', async () => {
+    const originalFromURL = QwenWeights.fromURL;
+    const options = { maxTokens: 7, onProgress() {} };
+    let receivedOptions: unknown;
+    QwenWeights.fromURL = (async (baseURL: string, loaderOptions) => {
+      expect(baseURL).toBe('/model/');
+      receivedOptions = loaderOptions;
+      return createTinyQwenWeights();
+    }) as typeof QwenWeights.fromURL;
+
+    try {
+      const runner = await QwenTSLRunner.fromURL('/model/', options);
+      expect(receivedOptions).toBe(options);
+      expect(runner.maxTokens).toBe(7);
+    } finally {
+      QwenWeights.fromURL = originalFromURL;
+    }
   });
 });

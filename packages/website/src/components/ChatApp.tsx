@@ -1,3 +1,4 @@
+import { completionFollowUpText, formatPrompt } from 'three-llm';
 import { DEFAULT_MODEL_ID, MODEL_CATALOG, resolveModelURL } from 'three-llm/catalog';
 import type { ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry } from 'three-llm';
 import { ArrowUpIcon, GithubIcon, MessageSquareIcon, SettingsIcon, SquareIcon } from 'lucide-react';
@@ -82,16 +83,7 @@ function defaultMaxNewTokens(contextLimit: number): number {
 }
 
 function conversationPrompt(runner: TslRunner, turns: ChatTurn[], enableThinking: boolean) {
-  if (runner.weights.formatChat) {
-    return runner.weights.formatChat(turns, { enableThinking });
-  }
-
-  let prompt = '';
-  for (const turn of turns) {
-    const label = turn.role === 'user' ? 'User' : 'Assistant';
-    prompt += `${label}: ${turn.text}\n\n`;
-  }
-  return `${prompt}Assistant:`;
+  return formatPrompt(runner.weights, turns, { enableThinking });
 }
 
 export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelChange: (id: string) => void }) {
@@ -333,7 +325,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
       if (conversationTokensRef.current && conversationTokensRef.current.length > 0 && !runner.weights.formatChat) {
         generateOptions.inputTokens = conversationTokensRef.current.concat(
-          runner.weights.tokenizer.encode(`\n\nUser: ${userText}\n\nAssistant:`),
+          runner.weights.tokenizer.encode(completionFollowUpText(userText)),
         );
       }
 
@@ -396,7 +388,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                     variant="ghost"
                     size="icon"
                     nativeButton={false}
-                    render={<a href="https://github.com/bhouston/three-llm" />}
+                    render={<a href="https://github.com/bhouston/three-llm" aria-label="GitHub" />}
                     aria-label="GitHub"
                   />
                 }
@@ -412,7 +404,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                     variant="ghost"
                     size="icon"
                     nativeButton={false}
-                    render={<a href="https://www.npmjs.com/package/three-llm" />}
+                    render={<a href="https://www.npmjs.com/package/three-llm" aria-label="npm" />}
                     aria-label="npm"
                   />
                 }
@@ -452,9 +444,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
             {history.length === 0 && assistantDraft === '' ? (
               <Empty className="h-full min-h-64">
                 <EmptyHeader>
-                  <EmptyTitle>
-                    {ready ? 'Send a message to start the conversation.' : 'Loading model...'}
-                  </EmptyTitle>
+                  <EmptyTitle>{ready ? 'Send a message to start the conversation.' : 'Loading model...'}</EmptyTitle>
                 </EmptyHeader>
               </Empty>
             ) : (
@@ -511,12 +501,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                 }}
               />
               <InputGroupAddon align="block-end" className="justify-end">
-                <div
-                  className="flex items-center gap-1"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                  }}
-                >
+                <div className="flex items-center gap-1">
                   <Select
                     value={model.id}
                     onValueChange={(value) => {

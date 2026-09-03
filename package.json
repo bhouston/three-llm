@@ -10,7 +10,9 @@
     "dev": "pnpm --parallel --filter three-llm --filter website dev",
     "start": "pnpm --filter website start",
     "test": "pnpm test:unit",
-    "test:unit": "pnpm tsc && vitest run",
+    "test:unit": "pnpm tsc && vitest run --project library --project website",
+    "test:browser": "vitest run --project library-browser",
+    "test:checkpoints": "vitest run --project checkpoints --project checkpoints-browser",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:all": "pnpm test && pnpm test:e2e",
@@ -36,7 +38,10 @@
     "vitest": "^4.1.10"
   },
   "lint-staged": {
-    "*.{js,jsx,ts,tsx,mjs,cjs}": ["oxfmt", "oxlint --fix"],
+    "*.{js,jsx,ts,tsx,mjs,cjs}": [
+      "oxfmt",
+      "oxlint --fix"
+    ],
     "*.{json,jsonc,md,mdx,css,html,yml,yaml}": "oxfmt"
   },
   "engines": {

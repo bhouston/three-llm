@@ -1,3 +1,4 @@
+export { completionFollowUpText, formatCompletionPrompt, formatPrompt } from './runtime/conversation.js';
 export { DecoderCPURunner } from './decoder/DecoderCPURunner.js';
 export { architectureFor, recipeFor } from './load/DecoderRecipe.js';
 export { DecoderTSLRunner } from './decoder/DecoderTSLRunner.js';
