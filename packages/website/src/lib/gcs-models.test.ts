@@ -4,6 +4,7 @@ import {
   DEFAULT_MODEL_CHUNK_BYTES,
   MAX_MODEL_CHUNK_BYTES,
   modelChunkRequestFromURL,
+  modelDirectoryFromSplat,
   modelsObjectUrl,
   objectPathFromSplat,
 } from './gcs-models';
@@ -29,6 +30,17 @@ describe('objectPathFromSplat', () => {
 describe('modelsObjectUrl', () => {
   it('maps object names onto the public bucket URL', () => {
     expect(modelsObjectUrl('gpt2/config.json')).toBe('https://storage.googleapis.com/three-llm/gpt2/config.json');
+  });
+});
+
+describe('modelDirectoryFromSplat', () => {
+  it('accepts a single model directory segment', () => {
+    expect(modelDirectoryFromSplat('smollm2-135m')).toBe('smollm2-135m');
+  });
+
+  it('rejects nested object paths and traversal', () => {
+    expect(modelDirectoryFromSplat('smollm2-135m/model.safetensors')).toBeUndefined();
+    expect(modelDirectoryFromSplat('../secret')).toBeUndefined();
   });
 });
 

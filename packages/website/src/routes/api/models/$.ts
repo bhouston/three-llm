@@ -2,7 +2,13 @@ import { Readable } from 'node:stream';
 import { Storage } from '@google-cloud/storage';
 import { createFileRoute } from '@tanstack/react-router';
 
-import { MODELS_BUCKET, MODELS_CACHE_CONTROL, modelChunkRequestFromURL, objectPathFromSplat } from '@/lib/gcs-models';
+import {
+  MODELS_BUCKET,
+  MODELS_CACHE_CONTROL,
+  MODELS_CDN_CACHE_CONTROL,
+  modelChunkRequestFromURL,
+  objectPathFromSplat,
+} from '@/lib/gcs-models';
 
 const storage = new Storage();
 const bucket = storage.bucket(MODELS_BUCKET);
@@ -80,7 +86,41 @@ function etagValue(metadata: ObjectMetadata, chunk: ChunkIdentity | undefined): 
   return `W/"${source}-part-${chunk.part}-size-${chunk.partSize}"`;
 }
 
-function responseHeaders(
+function httpDate(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return undefined;
+
+  return new Date(timestamp).toUTCString();
+}
+
+function setCacheValidatorHeaders(headers: Headers, metadata: ObjectMetadata, chunk: ChunkIdentity | undefined): void {
+  headers.set('accept-ranges', 'bytes');
+  headers.set('Cache-Control', MODELS_CACHE_CONTROL);
+  headers.set('CDN-Cache-Control', MODELS_CDN_CACHE_CONTROL);
+  headers.set('Cloudflare-CDN-Cache-Control', MODELS_CDN_CACHE_CONTROL);
+
+  const etag = etagValue(metadata, chunk);
+  if (etag) headers.set('etag', etag);
+  const lastModified = httpDate(metadata.lastModified);
+  if (lastModified) headers.set('last-modified', lastModified);
+}
+
+function weakETagValue(etag: string): string {
+  return etag.trim().replace(/^W\//i, '');
+}
+
+export function ifNoneMatchMatches(ifNoneMatch: string | null, etag: string | null): boolean {
+  if (ifNoneMatch === null || etag === null) return false;
+
+  return ifNoneMatch
+    .split(',')
+    .map((value) => value.trim())
+    .some((value) => value === '*' || weakETagValue(value) === weakETagValue(etag));
+}
+
+export function responseHeaders(
   metadata: ObjectMetadata,
   length: number,
   range: ByteRange | undefined,
@@ -91,12 +131,7 @@ function responseHeaders(
 
   headers.set('content-type', metadata.contentType);
   headers.set('content-length', String(length));
-  headers.set('accept-ranges', 'bytes');
-  headers.set('Cache-Control', MODELS_CACHE_CONTROL);
-
-  const etag = etagValue(metadata, chunk);
-  if (etag) headers.set('etag', etag);
-  if (metadata.lastModified) headers.set('last-modified', metadata.lastModified);
+  setCacheValidatorHeaders(headers, metadata, chunk);
 
   if (range) {
     const contentRange = `bytes ${range.start}-${range.end}/${metadata.size}`;
@@ -105,6 +140,12 @@ function responseHeaders(
     else headers.set('content-range', contentRange);
   }
 
+  return headers;
+}
+
+export function notModifiedHeaders(metadata: ObjectMetadata, chunk: ChunkIdentity | undefined): Headers {
+  const headers = new Headers();
+  setCacheValidatorHeaders(headers, metadata, chunk);
   return headers;
 }
 
@@ -149,11 +190,19 @@ async function proxyModel(request: Request, splat: string | undefined): Promise<
   }
 
   const length = range ? range.end - range.start + 1 : metadata.size;
+  const headers = responseHeaders(metadata, length, range, chunkIdentity);
+  if (ifNoneMatchMatches(request.headers.get('If-None-Match'), headers.get('etag'))) {
+    return new Response(null, {
+      status: 304,
+      headers: notModifiedHeaders(metadata, chunkIdentity),
+    });
+  }
+
   const responseBody = request.method === 'HEAD' ? null : streamObject(objectPath, range);
 
   return new Response(responseBody, {
     status: virtualChunk ? 200 : range ? 206 : 200,
-    headers: responseHeaders(metadata, length, range, chunkIdentity),
+    headers,
   });
 }
 

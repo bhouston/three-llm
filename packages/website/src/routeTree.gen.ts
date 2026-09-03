@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiModelsSplatRouteImport } from './routes/api/models/$'
+import { Route as ApiModelDetailsSplatRouteImport } from './routes/api/model-details/$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,30 +23,39 @@ const ApiModelsSplatRoute = ApiModelsSplatRouteImport.update({
   path: '/api/models/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiModelDetailsSplatRoute = ApiModelDetailsSplatRouteImport.update({
+  id: '/api/model-details/$',
+  path: '/api/model-details/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/model-details/$': typeof ApiModelDetailsSplatRoute
   '/api/models/$': typeof ApiModelsSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/model-details/$': typeof ApiModelDetailsSplatRoute
   '/api/models/$': typeof ApiModelsSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/model-details/$': typeof ApiModelDetailsSplatRoute
   '/api/models/$': typeof ApiModelsSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/models/$'
+  fullPaths: '/' | '/api/model-details/$' | '/api/models/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/models/$'
-  id: '__root__' | '/' | '/api/models/$'
+  to: '/' | '/api/model-details/$' | '/api/models/$'
+  id: '__root__' | '/' | '/api/model-details/$' | '/api/models/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiModelDetailsSplatRoute: typeof ApiModelDetailsSplatRoute
   ApiModelsSplatRoute: typeof ApiModelsSplatRoute
 }
 
@@ -65,11 +75,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiModelsSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/model-details/$': {
+      id: '/api/model-details/$'
+      path: '/api/model-details/$'
+      fullPath: '/api/model-details/$'
+      preLoaderRoute: typeof ApiModelDetailsSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiModelDetailsSplatRoute: ApiModelDetailsSplatRoute,
   ApiModelsSplatRoute: ApiModelsSplatRoute,
 }
 export const routeTree = rootRouteImport

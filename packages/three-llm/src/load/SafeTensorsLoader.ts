@@ -20,8 +20,13 @@ interface DownloadProgressOptions {
 }
 
 class SafeTensorsLoader {
-  async load(url: string, options: LoaderOptions = {}, downloadProgress?: DownloadProgressOptions) {
-    const buffer = await fetchArrayBuffer(url, 'SafeTensorsLoader', options.onProgress, downloadProgress);
+  async load(
+    url: string,
+    options: LoaderOptions = {},
+    downloadProgress?: DownloadProgressOptions,
+    expectedLength = 0,
+  ) {
+    const buffer = await fetchArrayBuffer(url, 'SafeTensorsLoader', options.onProgress, downloadProgress, expectedLength);
     return this.parse(buffer, options);
   }
 
@@ -84,6 +89,15 @@ interface SafeTensorDescriptor {
   dtype: string;
   shape: number[];
   data_offsets: number[];
+}
+
+interface SafeTensorFileInfo {
+  name: string;
+  size?: number;
+}
+
+interface ModelDetailsResponse {
+  files?: unknown;
 }
 
 function parseSafeTensors(
@@ -170,10 +184,51 @@ function parseSafeTensors(
   };
 }
 
-async function resolveSafetensorFiles(root: string, options: LoaderOptions = {}): Promise<string[]> {
+function localURLBase(): string {
+  return typeof location === 'undefined' ? 'http://localhost' : location.href;
+}
+
+function modelDetailsURL(root: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(root, localURLBase());
+  } catch {
+    return undefined;
+  }
+
+  if (parsed.pathname.startsWith('/api/models/') === false) return undefined;
+
+  const model = parsed.pathname.slice('/api/models/'.length).replace(/\/+$/, '');
+  if (model === '' || model.includes('/')) return undefined;
+
+  const detailsPath = `/api/model-details/${model}`;
+  return root.startsWith('/') ? detailsPath : `${parsed.origin}${detailsPath}`;
+}
+
+function parseModelDetailsFiles(details: ModelDetailsResponse): SafeTensorFileInfo[] | undefined {
+  if (Array.isArray(details.files) === false) return undefined;
+
+  const files = details.files
+    .map((file): SafeTensorFileInfo | undefined => {
+      if (file === null || typeof file !== 'object') return undefined;
+      const { name, size } = file as { name?: unknown; size?: unknown };
+      if (typeof name !== 'string' || name === '' || name.includes('/')) return undefined;
+      if (Number.isSafeInteger(size) === false || (size as number) < 0) return undefined;
+
+      return { name, size: size as number };
+    })
+    .filter((file): file is SafeTensorFileInfo => file !== undefined);
+
+  return files.length > 0 ? files : undefined;
+}
+
+async function resolveSafetensorFilesFromIndex(root: string, options: LoaderOptions = {}): Promise<SafeTensorFileInfo[]> {
   try {
     const singleResponse = await fetchResource(`${root}model.safetensors`, { method: 'HEAD' });
-    if (singleResponse.ok) return ['model.safetensors'];
+    if (singleResponse.ok) {
+      const size = Number(singleResponse.headers.get('Content-Length')) || undefined;
+      return [{ name: 'model.safetensors', size }];
+    }
   } catch {
     // Safari can reject a CORS HEAD even when a later GET would work.
   }
@@ -182,14 +237,35 @@ async function resolveSafetensorFiles(root: string, options: LoaderOptions = {})
     `${root}model.safetensors.index.json`,
     options.label || 'SafeTensorsLoader',
   );
-  return [...new Set(Object.values(index.weight_map))];
+  return [...new Set(Object.values(index.weight_map))].map((name) => ({ name }));
 }
 
-async function safetensorFileSizes(root: string, files: string[], label: string): Promise<number[]> {
+async function resolveSafetensorFileDetails(root: string, options: LoaderOptions = {}): Promise<SafeTensorFileInfo[]> {
+  const detailsURL = modelDetailsURL(root);
+  if (detailsURL !== undefined) {
+    try {
+      const details = await fetchJSON<ModelDetailsResponse>(detailsURL, options.label || 'SafeTensorsLoader');
+      const files = parseModelDetailsFiles(details);
+      if (files !== undefined) return files;
+    } catch {
+      // Fall back to Hugging Face-style discovery if the website API is unavailable.
+    }
+  }
+
+  return resolveSafetensorFilesFromIndex(root, options);
+}
+
+async function resolveSafetensorFiles(root: string, options: LoaderOptions = {}): Promise<string[]> {
+  return (await resolveSafetensorFileDetails(root, options)).map((file) => file.name);
+}
+
+async function safetensorFileSizes(root: string, files: SafeTensorFileInfo[], label: string): Promise<number[]> {
   return Promise.all(
     files.map(async (file) => {
+      if (file.size !== undefined) return file.size;
+
       try {
-        const response = await fetchResource(`${root}${file}`, { method: 'HEAD' }, label);
+        const response = await fetchResource(`${root}${file.name}`, { method: 'HEAD' }, label);
         if (response.ok === false) return 0;
 
         return Number(response.headers.get('Content-Length')) || 0;
@@ -203,13 +279,13 @@ async function safetensorFileSizes(root: string, files: string[], label: string)
 async function loadSafetensorsModel(root: string, options: LoaderOptions = {}): Promise<TensorMap> {
   const report = createProgress(options.label || 'SafeTensorsLoader', options.onProgress);
   const loader = new SafeTensorsLoader();
-  const files = await resolveSafetensorFiles(root, options);
+  const files = await resolveSafetensorFileDetails(root, options);
   const fileSizes = await safetensorFileSizes(root, files, options.label || 'SafeTensorsLoader');
   const totalBytes = fileSizes.reduce((total, size) => total + size, 0);
   const partCounts = fileSizes.map((size) => modelDownloadPartCount(size));
   const totalParts = partCounts.reduce((total, count) => total + count, 0);
-  const completedParts = new Array<number>(files.length).fill(0);
-  const completedBytes = new Array<number>(files.length).fill(0);
+  const completedParts = Array.from({ length: files.length }, () => 0);
+  const completedBytes = Array.from({ length: files.length }, () => 0);
 
   async function reportTensorProgress(): Promise<void> {
     const doneParts = completedParts.reduce((total, count) => total + count, 0);
@@ -237,10 +313,15 @@ async function loadSafetensorsModel(root: string, options: LoaderOptions = {}): 
   await reportTensorProgress();
 
   for (let i = 0; i < files.length; i++) {
-    const parsed = await loader.load(`${root}${files[i]}`, options, {
-      quiet: true,
-      onBytes: (received, total) => reportFileDownloadProgress(i, received, total),
-    });
+    const parsed = await loader.load(
+      `${root}${files[i]!.name}`,
+      options,
+      {
+        quiet: true,
+        onBytes: (received, total) => reportFileDownloadProgress(i, received, total),
+      },
+      fileSizes[i] ?? 0,
+    );
     if (completedParts[i] < (partCounts[i] || 1)) {
       completedParts[i] = partCounts[i] || 1;
       completedBytes[i] = fileSizes[i] || completedBytes[i] || 0;

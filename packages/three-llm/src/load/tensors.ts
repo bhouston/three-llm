@@ -751,14 +751,15 @@ async function fetchArrayBuffer(
   label = 'LLM',
   onProgress?: ProgressCallback,
   downloadProgress?: DownloadProgressOptions,
+  expectedLength = 0,
 ): Promise<ArrayBuffer> {
   if (canUseModelChunks(url)) {
-    const total = await contentLength(url, label, onProgress);
+    const total = expectedLength > 0 ? expectedLength : await contentLength(url, label, onProgress);
     if (total > MODEL_CHUNK_BYTES)
       return fetchArrayBufferInModelChunks(url, total, label, onProgress, downloadProgress);
   }
 
-  return fetchArrayBufferDirect(url, label, onProgress, 0, downloadProgress);
+  return fetchArrayBufferDirect(url, label, onProgress, expectedLength, downloadProgress);
 }
 
 export {

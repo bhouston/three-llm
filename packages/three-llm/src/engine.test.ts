@@ -164,6 +164,48 @@ describe('fetchArrayBuffer', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('uses a known same-origin model size to skip the chunk planning HEAD request', async () => {
+    const originalFetch = globalThis.fetch;
+    const total = 24 * 1024 * 1024 + 3;
+    const requested: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+
+      const parsed = new URL(url, 'http://localhost');
+      const part = parsed.searchParams.get('part');
+
+      if (part === '0') {
+        return new Response(new Uint8Array(24 * 1024 * 1024).fill(1), {
+          headers: { 'Content-Length': String(24 * 1024 * 1024) },
+        });
+      }
+
+      if (part === '1') {
+        return new Response(new Uint8Array([2, 3, 4]), { headers: { 'Content-Length': '3' } });
+      }
+
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const buffer = await fetchArrayBuffer('/api/models/gpt2/model.safetensors', 'Test', undefined, undefined, total);
+      const bytes = new Uint8Array(buffer);
+
+      expect(bytes.byteLength).toBe(total);
+      expect(bytes[0]).toBe(1);
+      expect(bytes[24 * 1024 * 1024]).toBe(2);
+      expect(bytes[total - 1]).toBe(4);
+      expect(requested).toEqual([
+        'GET /api/models/gpt2/model.safetensors?part=0&partSize=25165824',
+        'GET /api/models/gpt2/model.safetensors?part=1&partSize=25165824',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 describe('SafeTensorsLoader', () => {
@@ -206,6 +248,31 @@ describe('SafeTensorsLoader', () => {
       expect(requested).toEqual([
         'HEAD https://storage.googleapis.com/download/storage/v1/b/three-llm/o/smollm2-135m%2Fmodel.safetensors?alt=media',
       ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('uses website model details JSON for safetensor discovery', async () => {
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+
+      if (url === '/api/model-details/smollm2-135m') {
+        return Response.json({
+          model: 'smollm2-135m',
+          files: [{ name: 'model.safetensors', size: 123 }],
+        });
+      }
+
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(resolveSafetensorFiles('/api/models/smollm2-135m/')).resolves.toEqual(['model.safetensors']);
+      expect(requested).toEqual(['GET /api/model-details/smollm2-135m']);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -274,10 +341,49 @@ describe('SafeTensorsLoader', () => {
         onProgress: (message) => progress.push(message),
       });
 
-      expect(progress.some((message) => /^Test: Loading tensor model data, 0 of 2 parts, \(/.test(message))).toBe(true);
-      expect(progress.some((message) => /^Test: Loading tensor model data, 1 of 2 parts, \(/.test(message))).toBe(true);
-      expect(progress.some((message) => /^Test: Loading tensor model data, 2 of 2 parts, \(/.test(message))).toBe(true);
+      expect(progress.some((message) => message.startsWith('Test: Loading tensor model data, 0 of 2 parts, ('))).toBe(
+        true,
+      );
+      expect(progress.some((message) => message.startsWith('Test: Loading tensor model data, 1 of 2 parts, ('))).toBe(
+        true,
+      );
+      expect(progress.some((message) => message.startsWith('Test: Loading tensor model data, 2 of 2 parts, ('))).toBe(
+        true,
+      );
       expect(progress.some((message) => message.includes('model-00001-of-00002'))).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('loads same-origin safetensors with sizes from model details JSON', async () => {
+    const originalFetch = globalThis.fetch;
+    const fixture = createSafeTensorsFixture();
+    const requested: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+
+      if (url === '/api/model-details/gpt2') {
+        return Response.json({
+          model: 'gpt2',
+          files: [{ name: 'model.safetensors', size: fixture.byteLength }],
+        });
+      }
+
+      if (url === '/api/models/gpt2/model.safetensors') {
+        return new Response(fixture.slice(0), { headers: { 'Content-Length': String(fixture.byteLength) } });
+      }
+
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const tensors = await loadSafetensorsModel('/api/models/gpt2/', { label: 'Test' });
+
+      expect(Array.from(tensors.values?.data as Float32Array)).toEqual([1, 2, 3, 4]);
+      expect(requested).toEqual(['GET /api/model-details/gpt2', 'GET /api/models/gpt2/model.safetensors']);
     } finally {
       globalThis.fetch = originalFetch;
     }

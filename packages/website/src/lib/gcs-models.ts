@@ -1,7 +1,19 @@
 export const MODELS_BUCKET = 'three-llm';
-export const MODELS_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+export const MODELS_CACHE_CONTROL = 'public, max-age=31536000, s-maxage=31536000, immutable';
+export const MODELS_CDN_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 export const DEFAULT_MODEL_CHUNK_BYTES = 24 * 1024 * 1024;
 export const MAX_MODEL_CHUNK_BYTES = 24 * 1024 * 1024;
+export const MODEL_DETAILS_CACHE_CONTROL = 'public, max-age=3600, s-maxage=86400';
+
+export interface ModelSafetensorFile {
+  name: string;
+  size: number;
+}
+
+export interface ModelDetailsResponse {
+  model: string;
+  files: ModelSafetensorFile[];
+}
 
 export type ModelChunkRequest =
   | { kind: 'none' }
@@ -27,6 +39,13 @@ export function objectPathFromSplat(splat: string | undefined): string | undefin
   }
 
   return normalized;
+}
+
+export function modelDirectoryFromSplat(splat: string | undefined): string | undefined {
+  const objectPath = objectPathFromSplat(splat);
+  if (objectPath === undefined || objectPath.includes('/')) return undefined;
+
+  return objectPath;
 }
 
 export function modelsObjectUrl(objectPath: string): string {
