@@ -37,7 +37,7 @@ import {
 import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG } from './catalog.js';
 import { QwenWeights } from './qwen/QwenWeights.js';
 import { QwenTSLRunner } from './qwen/QwenTSLRunner.js';
-import { parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
+import { loadSafetensorsModel, parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
 import { resolveTensor } from './load/TensorNameMap.js';
 import { UnigramTokenizer } from './load/UnigramTokenizer.js';
 import { closeArray, createTinyLlama, createTinyQwenWeights } from './test/helpers.js';
@@ -120,7 +120,7 @@ describe('fetchArrayBuffer', () => {
 
   it('downloads large same-origin model files as virtual chunks', async () => {
     const originalFetch = globalThis.fetch;
-    const total = 30 * 1024 * 1024 + 3;
+    const total = 24 * 1024 * 1024 + 3;
     const requested: string[] = [];
 
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -135,8 +135,8 @@ describe('fetchArrayBuffer', () => {
       const part = parsed.searchParams.get('part');
 
       if (part === '0') {
-        return new Response(new Uint8Array(30 * 1024 * 1024).fill(1), {
-          headers: { 'Content-Length': String(30 * 1024 * 1024) },
+        return new Response(new Uint8Array(24 * 1024 * 1024).fill(1), {
+          headers: { 'Content-Length': String(24 * 1024 * 1024) },
         });
       }
 
@@ -153,12 +153,12 @@ describe('fetchArrayBuffer', () => {
 
       expect(bytes.byteLength).toBe(total);
       expect(bytes[0]).toBe(1);
-      expect(bytes[30 * 1024 * 1024]).toBe(2);
+      expect(bytes[24 * 1024 * 1024]).toBe(2);
       expect(bytes[total - 1]).toBe(4);
       expect(requested).toEqual([
         'HEAD /api/models/gpt2/model.safetensors',
-        'GET /api/models/gpt2/model.safetensors?part=0&partSize=31457280',
-        'GET /api/models/gpt2/model.safetensors?part=1&partSize=31457280',
+        'GET /api/models/gpt2/model.safetensors?part=0&partSize=25165824',
+        'GET /api/models/gpt2/model.safetensors?part=1&partSize=25165824',
       ]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -235,6 +235,49 @@ describe('SafeTensorsLoader', () => {
         'model.safetensors-1-of-2.safetensors',
         'model.safetensors-2-of-2.safetensors',
       ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('reports aggregate tensor model data progress', async () => {
+    const originalFetch = globalThis.fetch;
+    const fixture = createSafeTensorsFixture();
+    const progress: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith('model.safetensors') && init?.method === 'HEAD') {
+        return new Response(null, { status: 404 });
+      }
+
+      if (url.endsWith('model.safetensors.index.json')) {
+        return Response.json({
+          weight_map: {
+            a: 'model-00001-of-00002.safetensors',
+            b: 'model-00002-of-00002.safetensors',
+          },
+        });
+      }
+
+      if (init?.method === 'HEAD') {
+        return new Response(null, { headers: { 'Content-Length': String(fixture.byteLength) } });
+      }
+
+      return new Response(fixture.slice(0), { headers: { 'Content-Length': String(fixture.byteLength) } });
+    }) as typeof fetch;
+
+    try {
+      await loadSafetensorsModel('https://example.test/model/', {
+        label: 'Test',
+        onProgress: (message) => progress.push(message),
+      });
+
+      expect(progress.some((message) => /^Test: Loading tensor model data, 0 of 2 files, \(/.test(message))).toBe(true);
+      expect(progress.some((message) => /^Test: Loading tensor model data, 1 of 2 files, \(/.test(message))).toBe(true);
+      expect(progress.some((message) => /^Test: Loading tensor model data, 2 of 2 files, \(/.test(message))).toBe(true);
+      expect(progress.some((message) => message.includes('model-00001-of-00002'))).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -52,6 +52,11 @@ const FETCH_RETRY_COUNT = 2;
 const MODEL_CHUNK_BYTES = 24 * 1024 * 1024;
 const MODEL_CHUNK_CONCURRENCY = 3;
 
+interface DownloadProgressOptions {
+  quiet?: boolean;
+  onBytes?: (received: number, total: number) => void | Promise<void>;
+}
+
 function bfloat16ToFloat32(value: number): number {
   _bf16Bits[0] = value << 16;
   return _bf16Float[0];
@@ -342,8 +347,9 @@ async function retryOperation<T>(
   label: string,
   onProgress: ProgressCallback | undefined,
   operation: () => Promise<T>,
+  downloadProgress?: DownloadProgressOptions,
 ): Promise<T> {
-  const report = createProgress(label, onProgress);
+  const report = downloadProgress?.quiet ? async () => yieldToBrowser() : createProgress(label, onProgress);
 
   for (let attempt = 0; attempt <= FETCH_RETRY_COUNT; attempt++) {
     try {
@@ -490,19 +496,26 @@ async function fetchArrayBufferDirect(
   label = 'LLM',
   onProgress?: ProgressCallback,
   expectedLength = 0,
+  downloadProgress?: DownloadProgressOptions,
 ): Promise<ArrayBuffer> {
-  return retryOperation(url, label, onProgress, async () => {
-    const response = await fetchResponseOnce(url);
+  return retryOperation(
+    url,
+    label,
+    onProgress,
+    async () => {
+      const response = await fetchResponseOnce(url);
 
-    if (response.ok === false) {
-      await response.body?.cancel();
-      throw responseError(url, response, label);
-    }
+      if (response.ok === false) {
+        await response.body?.cancel();
+        throw responseError(url, response, label);
+      }
 
-    const buffer = await readResponseArrayBuffer(url, response, label, onProgress);
-    assertCompleteDownload(url, label, buffer.byteLength, expectedLength);
-    return buffer;
-  });
+      const buffer = await readResponseArrayBuffer(url, response, label, onProgress, downloadProgress);
+      assertCompleteDownload(url, label, buffer.byteLength, expectedLength);
+      return buffer;
+    },
+    downloadProgress,
+  );
 }
 
 async function fetchArrayBufferInto(
@@ -512,17 +525,33 @@ async function fetchArrayBufferInto(
   target: Uint8Array,
   targetOffset: number,
   expectedLength: number,
+  downloadProgress?: DownloadProgressOptions,
 ): Promise<number> {
-  return retryOperation(url, label, onProgress, async () => {
-    const response = await fetchResponseOnce(url);
+  return retryOperation(
+    url,
+    label,
+    onProgress,
+    async () => {
+      const response = await fetchResponseOnce(url);
 
-    if (response.ok === false) {
-      await response.body?.cancel();
-      throw responseError(url, response, label);
-    }
+      if (response.ok === false) {
+        await response.body?.cancel();
+        throw responseError(url, response, label);
+      }
 
-    return readResponseIntoArray(url, response, label, onProgress, target, targetOffset, expectedLength);
-  });
+      return readResponseIntoArray(
+        url,
+        response,
+        label,
+        onProgress,
+        target,
+        targetOffset,
+        expectedLength,
+        downloadProgress,
+      );
+    },
+    downloadProgress,
+  );
 }
 
 async function fetchArrayBufferInModelChunks(
@@ -530,8 +559,9 @@ async function fetchArrayBufferInModelChunks(
   total: number,
   label: string,
   onProgress?: ProgressCallback,
+  downloadProgress?: DownloadProgressOptions,
 ): Promise<ArrayBuffer> {
-  const report = createProgress(label, onProgress);
+  const report = downloadProgress?.quiet ? async () => yieldToBrowser() : createProgress(label, onProgress);
   const fileName = fileNameFromURL(url);
   const chunkCount = Math.ceil(total / MODEL_CHUNK_BYTES);
   const bytes = new Uint8Array(total);
@@ -554,9 +584,11 @@ async function fetchArrayBufferInModelChunks(
           bytes,
           start,
           end - start,
+          { quiet: downloadProgress?.quiet },
         );
 
         completed += received;
+        await downloadProgress?.onBytes?.(completed, total);
         await report(
           `Downloaded chunk ${part + 1} / ${chunkCount} of ${fileName} (${formatBytes(completed)} / ${formatBytes(total)})`,
         );
@@ -576,10 +608,11 @@ async function readResponseIntoArray(
   target: Uint8Array,
   targetOffset: number,
   expectedLength: number,
+  downloadProgress?: DownloadProgressOptions,
 ): Promise<number> {
   const fileName = fileNameFromURL(url);
   const total = Number(response.headers.get('Content-Length')) || 0;
-  const report = createProgress(label, onProgress);
+  const report = downloadProgress?.quiet ? async () => yieldToBrowser() : createProgress(label, onProgress);
 
   if (response.body === null || typeof response.body.getReader !== 'function') {
     await report(`Downloading ${fileName}${total ? ` (${formatBytes(total)})` : ''}...`);
@@ -588,6 +621,7 @@ async function readResponseIntoArray(
     assertCompleteDownload(url, label, buffer.byteLength, total || expectedLength);
     assertCompleteDownload(url, label, buffer.byteLength, expectedLength);
     target.set(new Uint8Array(buffer), targetOffset);
+    await downloadProgress?.onBytes?.(buffer.byteLength, total || expectedLength);
     await report(`Downloaded ${fileName} (${formatBytes(buffer.byteLength)})`);
     return buffer.byteLength;
   }
@@ -608,12 +642,14 @@ async function readResponseIntoArray(
     if (received - lastReport >= 8 * 1024 * 1024 || (total > 0 && received === total)) {
       lastReport = received;
       const totalText = total > 0 ? ` / ${formatBytes(total)}` : '';
+      await downloadProgress?.onBytes?.(received, total || expectedLength);
       await report(`Downloading ${fileName} ${formatBytes(received)}${totalText}`);
     }
   }
 
   assertCompleteDownload(url, label, received, total || expectedLength);
   assertCompleteDownload(url, label, received, expectedLength);
+  await downloadProgress?.onBytes?.(received, total || expectedLength);
   await report(`Downloaded ${fileName} (${formatBytes(received)})`);
   return received;
 }
@@ -623,15 +659,17 @@ async function readResponseArrayBuffer(
   response: Response,
   label = 'LLM',
   onProgress?: ProgressCallback,
+  downloadProgress?: DownloadProgressOptions,
 ): Promise<ArrayBuffer> {
   const fileName = fileNameFromURL(url);
   const total = Number(response.headers.get('Content-Length')) || 0;
-  const report = createProgress(label, onProgress);
+  const report = downloadProgress?.quiet ? async () => yieldToBrowser() : createProgress(label, onProgress);
 
   if (response.body === null || typeof response.body.getReader !== 'function' || total > STREAM_BUFFER_LIMIT) {
     await report(`Downloading ${fileName}${total ? ` (${formatBytes(total)})` : ''}...`);
     const buffer = await response.arrayBuffer();
     assertCompleteDownload(url, label, buffer.byteLength, total);
+    await downloadProgress?.onBytes?.(buffer.byteLength, total);
     await report(`Downloaded ${fileName} (${formatBytes(buffer.byteLength)})`);
     return buffer;
   }
@@ -664,17 +702,20 @@ async function readResponseArrayBuffer(
     if (received - lastReport >= 8 * 1024 * 1024 || (total > 0 && received === total)) {
       lastReport = received;
       const totalText = total > 0 ? ` / ${formatBytes(total)}` : '';
+      await downloadProgress?.onBytes?.(received, total);
       await report(`Downloading ${fileName} ${formatBytes(received)}${totalText}`);
     }
   }
 
   if (bytes !== null) {
     assertCompleteDownload(url, label, received, total);
+    await downloadProgress?.onBytes?.(received, total);
     await report(`Downloaded ${fileName} (${formatBytes(received)})`);
     return received === bytes.byteLength ? bytes.buffer : bytes.buffer.slice(0, received);
   }
 
   assertCompleteDownload(url, label, received, total);
+  await downloadProgress?.onBytes?.(received, total);
   const packed = new Uint8Array(received);
   let offset = 0;
 
@@ -688,13 +729,19 @@ async function readResponseArrayBuffer(
   return packed.buffer;
 }
 
-async function fetchArrayBuffer(url: string, label = 'LLM', onProgress?: ProgressCallback): Promise<ArrayBuffer> {
+async function fetchArrayBuffer(
+  url: string,
+  label = 'LLM',
+  onProgress?: ProgressCallback,
+  downloadProgress?: DownloadProgressOptions,
+): Promise<ArrayBuffer> {
   if (canUseModelChunks(url)) {
     const total = await contentLength(url, label, onProgress);
-    if (total > MODEL_CHUNK_BYTES) return fetchArrayBufferInModelChunks(url, total, label, onProgress);
+    if (total > MODEL_CHUNK_BYTES)
+      return fetchArrayBufferInModelChunks(url, total, label, onProgress, downloadProgress);
   }
 
-  return fetchArrayBufferDirect(url, label, onProgress);
+  return fetchArrayBufferDirect(url, label, onProgress, 0, downloadProgress);
 }
 
 export {
