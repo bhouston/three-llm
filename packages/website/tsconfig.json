@@ -12,9 +12,9 @@
     "allowImportingTsExtensions": true,
     "paths": {
       "@/*": ["./src/*"],
-      "three-llm": ["../three-llm/src/index.ts"],
-      "three-llm/catalog": ["../three-llm/src/catalog.ts"]
+      "vgpu-llm": ["../vgpu-llm/src/index.ts"],
+      "vgpu-llm/catalog": ["../vgpu-llm/src/catalog.ts"]
     }
   },
-  "references": [{ "path": "../three-llm" }]
+  "references": [{ "path": "../vgpu-llm" }]
 }

@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { playwright } from '@vitest/browser-playwright';
 import { defineConfig } from 'vitest/config';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
@@ -11,17 +10,17 @@ export default defineConfig({
       {
         test: {
           name: 'library',
-          include: ['packages/three-llm/src/**/*.test.ts'],
-          exclude: ['**/e2e/**', '**/*.browser.test.ts', '**/*.checkpoint.test.ts'],
+          include: ['packages/vgpu-llm/src/**/*.test.ts'],
+          exclude: ['**/e2e/**', '**/*.gpu.test.ts', '**/*.checkpoint.test.ts'],
           environment: 'node',
           coverage: {
             provider: 'v8',
             reporter: ['text', 'lcov'],
             reportsDirectory: './coverage',
-            include: ['packages/three-llm/src/**/*.ts'],
+            include: ['packages/vgpu-llm/src/**/*.ts'],
             exclude: [
               '**/*.test.ts',
-              '**/*.browser.test.ts',
+              '**/*.gpu.test.ts',
               '**/*.checkpoint.test.ts',
               '**/*.d.ts',
               '**/index.ts',
@@ -32,53 +31,28 @@ export default defineConfig({
       },
       {
         test: {
-          name: 'library-browser',
-          include: ['packages/three-llm/src/**/*.browser.test.ts'],
-          exclude: ['**/*.checkpoint.browser.test.ts'],
-          browser: {
-            enabled: true,
-            provider: playwright(),
-            headless: true,
-            instances: [{ browser: 'chromium' }],
-          },
-        },
-        server: {
-          proxy: {
-            '/api/models': {
-              target: 'https://storage.googleapis.com/three-llm',
-              changeOrigin: true,
-              rewrite: (requestPath) => requestPath.replace(/^\/api\/models/, ''),
-            },
-          },
-        },
-      },
-      {
-        test: {
-          name: 'checkpoints',
-          include: ['packages/three-llm/src/**/*.checkpoint.test.ts'],
-          exclude: ['**/*.browser.test.ts'],
+          // Real WGSL execution on a headless Dawn-backed device via
+          // `vgpu/node` (Metal/Vulkan/D3D12) — no browser needed. Tests
+          // `skip()` themselves on hosts without a usable GPU backend.
+          name: 'library-gpu',
+          include: ['packages/vgpu-llm/src/**/*.gpu.test.ts'],
+          exclude: ['**/*.checkpoint.test.ts'],
           environment: 'node',
         },
       },
       {
         test: {
-          name: 'checkpoints-browser',
-          include: ['packages/three-llm/src/**/*.checkpoint.browser.test.ts'],
-          browser: {
-            enabled: true,
-            provider: playwright(),
-            headless: true,
-            instances: [{ browser: 'chromium' }],
-          },
+          name: 'checkpoints',
+          include: ['packages/vgpu-llm/src/**/*.checkpoint.test.ts'],
+          exclude: ['**/*.gpu.checkpoint.test.ts'],
+          environment: 'node',
         },
-        server: {
-          proxy: {
-            '/api/models': {
-              target: 'https://storage.googleapis.com/three-llm',
-              changeOrigin: true,
-              rewrite: (requestPath) => requestPath.replace(/^\/api\/models/, ''),
-            },
-          },
+      },
+      {
+        test: {
+          name: 'checkpoints-gpu',
+          include: ['packages/vgpu-llm/src/**/*.gpu.checkpoint.test.ts'],
+          environment: 'node',
         },
       },
       {
@@ -93,7 +67,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      'three-llm': path.join(rootDir, 'packages/three-llm/src/index.ts'),
+      'vgpu-llm': path.join(rootDir, 'packages/vgpu-llm/src/index.ts'),
     },
   },
 });

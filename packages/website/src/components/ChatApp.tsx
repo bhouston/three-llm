@@ -1,4 +1,4 @@
-import { completionFollowUpText, formatPrompt } from 'three-llm';
+import { completionFollowUpText, formatPrompt } from 'vgpu-llm';
 import {
   catalogWeightClass,
   DEFAULT_MODEL_ID,
@@ -7,8 +7,8 @@ import {
   MOBILE_RECOMMENDED_MODEL_ID,
   MODEL_CATALOG,
   resolveModelURL,
-} from 'three-llm/catalog';
-import type { CatalogWeightClass, ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry } from 'three-llm';
+} from 'vgpu-llm/catalog';
+import type { CatalogWeightClass, ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry } from 'vgpu-llm';
 import { ArrowUpIcon, MessageSquareIcon, SettingsIcon, SquareIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -36,10 +36,9 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 
-type TslRunner = {
+type GpuRunner = {
   maxTokens: number;
-  generate: (renderer: unknown, prompt: string, options: GenerateOptions) => Promise<GenerationResult>;
-  prepare?: (renderer: unknown) => void;
+  generate: (prompt: string, options: GenerateOptions) => Promise<GenerationResult>;
   resetCache: () => void;
   weights: {
     architecture: string;
@@ -115,7 +114,7 @@ function defaultMaxNewTokens(contextLimit: number): number {
   return Math.max(1, Math.min(DEFAULT_MAX_NEW_TOKENS, contextLimit - 1));
 }
 
-function conversationPrompt(runner: TslRunner, turns: ChatTurn[], enableThinking: boolean) {
+function conversationPrompt(runner: GpuRunner, turns: ChatTurn[], enableThinking: boolean) {
   return formatPrompt(runner.weights, turns, { enableThinking });
 }
 
@@ -123,10 +122,9 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   const ga = useGoogleAnalytics();
   const mobile = isMobileDevice();
   const model = useMemo(() => selectedModel(modelId, mobile), [mobile, modelId]);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const runnerRef = useRef<TslRunner | undefined>(undefined);
-  const rendererRef = useRef<{ dispose: () => void } | undefined>(undefined);
+  const runnerRef = useRef<GpuRunner | undefined>(undefined);
+  const gpuRef = useRef<{ dispose: () => void } | undefined>(undefined);
   const conversationTokensRef = useRef<number[] | undefined>(undefined);
   const abortRef = useRef<AbortController | undefined>(undefined);
   const generationIdRef = useRef(0);
@@ -225,42 +223,33 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         return;
       }
 
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
       try {
         const downloadStart = performance.now();
         ga.event('model-download', { model_name: model.name });
 
         setStatus(`Resolving ${model.name}…`);
-        const [{ WebGPURenderer }, { createTSLRunner }] = await Promise.all([
-          import('three/webgpu'),
-          import('three-llm'),
-        ]);
+        const [{ init: initGpu }, { createGpuRunner }] = await Promise.all([import('vgpu'), import('vgpu-llm')]);
 
-        const renderer = new WebGPURenderer({ canvas, antialias: false });
-        await renderer.init();
-        rendererRef.current = renderer;
+        const gpu = await initGpu();
+        gpuRef.current = gpu;
 
         const modelURL = await resolveModelURL(model);
         const fromLocal = model.localUrl !== undefined && modelURL === model.localUrl;
         setStatus(`Loading ${model.name} from ${fromLocal ? 'hosted models' : modelURL}…`);
 
-        const runner = (await createTSLRunner(modelURL, {
+        const runner = (await createGpuRunner(gpu, modelURL, {
           prefillChunkSize: 4,
           maxTokens: isConstrainedDevice() ? MOBILE_MAX_TOKENS : undefined,
           onProgress: (message) => {
             if (!cancelled) setStatus(message);
           },
-        })) as TslRunner;
+        })) as GpuRunner;
 
         if (cancelled) {
           runnerRef.current = undefined;
-          renderer.dispose();
+          gpu.dispose();
           return;
         }
-
-        runner.prepare?.(renderer);
 
         runnerRef.current = runner;
         setArchitecture(runner.weights.architecture);
@@ -287,8 +276,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
     return () => {
       cancelled = true;
       abortRef.current?.abort();
-      rendererRef.current?.dispose();
-      rendererRef.current = undefined;
+      gpuRef.current?.dispose();
+      gpuRef.current = undefined;
       runnerRef.current = undefined;
     };
   }, [ga, model]);
@@ -318,9 +307,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
   async function sendMessage() {
     const runner = runnerRef.current;
-    const renderer = rendererRef.current;
     const userText = draft.trim();
-    if (!userText || !runner || !renderer || generating) return;
+    if (!userText || !runner || generating) return;
 
     const abortController = new AbortController();
     abortRef.current = abortController;
@@ -384,11 +372,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         );
       }
 
-      const result = await runner.generate(
-        renderer,
-        conversationPrompt(runner, nextHistory, enableThinking),
-        generateOptions,
-      );
+      const result = await runner.generate(conversationPrompt(runner, nextHistory, enableThinking), generateOptions);
       if (generationId !== generationIdRef.current) return;
 
       const reply = result.generatedText || runner.weights.tokenizer.decode(generatedIds);
@@ -433,7 +417,6 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <canvas ref={canvasRef} className="hidden" width={1} height={1} aria-hidden />
       <main className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col px-4">
         {error ? (
           <Alert variant="destructive" className="mt-4">
@@ -547,9 +530,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                               <span className="flex items-center gap-2">
                                 <span className={WEIGHT_TEXT_CLASS[weightClass]}>{entry.name}</span>
                                 <span className="text-muted-foreground">{entry.sizeHint}</span>
-                                {badge ? (
-                                  <Badge variant={desktopOnly ? 'outline' : 'secondary'}>{badge}</Badge>
-                                ) : null}
+                                {badge ? <Badge variant={desktopOnly ? 'outline' : 'secondary'}>{badge}</Badge> : null}
                               </span>
                             </SelectItem>
                           );

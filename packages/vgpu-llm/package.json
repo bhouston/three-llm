@@ -1,0 +1,63 @@
+{
+  "name": "vgpu-llm",
+  "version": "0.5.0",
+  "description": "Browser LLM inference on WebGPU using vgpu compute shaders.",
+  "keywords": [
+    "gpt2",
+    "inference",
+    "llm",
+    "phi",
+    "qwen",
+    "smollm",
+    "typescript",
+    "vgpu",
+    "webgpu",
+    "wgsl"
+  ],
+  "homepage": "https://github.com/bhouston/vgpu-llm",
+  "bugs": {
+    "url": "https://github.com/bhouston/vgpu-llm/issues"
+  },
+  "license": "MIT",
+  "author": "Ben Houston (https://ben3d.ca)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bhouston/vgpu-llm.git",
+    "directory": "packages/vgpu-llm"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "default": "./dist/catalog.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w --preserveWatchOutput --noEmitOnError",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "p-limit": "^7.3.2"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.72",
+    "vgpu": "^0.4.0"
+  },
+  "peerDependencies": {
+    "vgpu": ">=0.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

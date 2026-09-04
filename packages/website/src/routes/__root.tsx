@@ -15,11 +15,10 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'Three-LLM — WebGPU LLM Inference Engine' },
+      { title: 'vgpu-llm — WebGPU LLM Inference Engine' },
       {
         name: 'description',
-        content:
-          'The open-source Three.js-based modern LLM Inference Engine that runs in your browser via WebGPU compute.',
+        content: 'The open-source vgpu-based modern LLM Inference Engine that runs in your browser via WebGPU compute.',
       },
     ],
   }),

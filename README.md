@@ -1,17 +1,21 @@
-# three-llm
+# vgpu-llm
 
-[![npm version](https://img.shields.io/npm/v/three-llm.svg)](https://www.npmjs.com/package/three-llm)
+[![npm version](https://img.shields.io/npm/v/vgpu-llm.svg)](https://www.npmjs.com/package/vgpu-llm)
 [![live demo](https://img.shields.io/badge/demo-three--llm.ben3d.ca-blue)](https://three-llm.ben3d.ca)
 
-Run large language models in the browser with WebGPU. `three-llm` implements transformer inference with [Three.js](https://threejs.org/) and its TSL compute shader system, so model execution stays on the user's GPU without a server-side inference runtime.
+Run large language models in the browser with WebGPU. `vgpu-llm` implements transformer inference as
+[`vgpu`](https://github.com/vercel-labs/vgpu) WGSL compute kernels, so model execution stays on the user's GPU
+without a server-side inference runtime.
 
-**[Try the live demo: threekit-llm.ben3d.ca](https://three-llm.ben3d.ca)** · **[Read the technical write-up](https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs)**
+**[Try the live demo: three-llm.ben3d.ca](https://three-llm.ben3d.ca)** · **[Background: the original
+Three.js-based write-up](https://ben3d.ca/blog/running-llms-in-the-browser-with-threejs)** (the engine has since
+moved from Three.js/TSL to `vgpu`)
 
 <img src="three-llm-chat.webp" alt="Demo App Interface" width="500" />
 
 ## Features
 
-- WebGPU inference through Three.js TSL compute shaders
+- WebGPU inference through `vgpu` WGSL compute kernels
 - CPU reference runners for testing and validation
 - Prompt caching, chunked prefill, streaming token callbacks, and GPU sampling
 - GPT-2, Llama-style, Gemma 3, Phi, and Qwen 3.5 decoder architectures
@@ -29,26 +33,25 @@ Model files can range from a few megabytes to several gigabytes. Remote Hugging 
 ## Install
 
 ```sh
-pnpm add three-llm three
+pnpm add vgpu-llm vgpu
 ```
 
 ## Usage
 
-Create a Three.js WebGPU renderer, load a compatible Hugging Face checkpoint, and generate text:
+Initialize a `vgpu` context, load a compatible Hugging Face checkpoint, and generate text:
 
 ```ts
-import { createTSLRunner } from 'three-llm';
-import { WebGPURenderer } from 'three/webgpu';
+import { createGpuRunner } from 'vgpu-llm';
+import { init } from 'vgpu';
 
-const renderer = new WebGPURenderer();
-await renderer.init();
+const gpu = await init();
 
-const runner = await createTSLRunner('https://huggingface.co/HuggingFaceTB/SmolLM2-135M/resolve/main/', {
+const runner = await createGpuRunner(gpu, 'https://huggingface.co/HuggingFaceTB/SmolLM2-135M/resolve/main/', {
   onProgress: console.log,
   prefillChunkSize: 4,
 });
 
-const result = await runner.generate(renderer, 'Once upon a time,', {
+const result = await runner.generate('Once upon a time,', {
   maxNewTokens: 64,
   temperature: 0.7,
   topK: 10,
@@ -61,7 +64,7 @@ const result = await runner.generate(renderer, 'Once upon a time,', {
 console.log(result.generatedText);
 ```
 
-For multi-turn chat, pass formatted messages with `formatPrompt` from `three-llm`. For catalog entries and URL resolution, import `MODEL_CATALOG` and `resolveModelURL` from `three-llm/catalog`.
+For multi-turn chat, pass formatted messages with `formatPrompt` from `vgpu-llm`. For catalog entries and URL resolution, import `MODEL_CATALOG` and `resolveModelURL` from `vgpu-llm/catalog`.
 
 ## Run the demo locally
 
@@ -79,7 +82,7 @@ Open [http://localhost:3000](http://localhost:3000). The demo loads checkpoints 
 
 This monorepo uses pnpm workspaces:
 
-- `packages/three-llm`: the inference library, model loaders, tokenizers, and TSL kernels
+- `packages/vgpu-llm`: the inference library, model loaders, tokenizers, and `vgpu` WGSL kernels
 - `packages/website`: the React chat demo
 
 Requirements: Node.js 20 or newer, pnpm 11.
@@ -88,6 +91,8 @@ Requirements: Node.js 20 or newer, pnpm 11.
 pnpm dev            # watch the library and run the demo
 pnpm build          # build every workspace package
 pnpm test           # run type checks and unit tests
+pnpm test:gpu       # run real-GPU kernel/runner tests via vgpu/node (Dawn), no browser needed
+pnpm test:checkpoints # run CPU + real-GPU tests against downloaded checkpoints
 pnpm test:e2e       # run Playwright tests
 pnpm lint           # check source with Oxlint
 pnpm format         # format the repository with Oxfmt

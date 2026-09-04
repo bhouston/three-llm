@@ -1,0 +1,1076 @@
+import { describe, expect, it } from 'vitest';
+import { init as initMockGpu } from 'vgpu/mock';
+
+import { architectureFor, recipeFor } from './load/DecoderRecipe.js';
+import { GPT2Tokenizer } from './load/GPT2Tokenizer.js';
+import {
+  generateAsync,
+  generateSync,
+  planPromptCache,
+  prepareGenerationFromTokens,
+  sharedPrefixLength,
+} from './runtime/generate.js';
+import { formatChatTemplate } from './runtime/chatTemplates.js';
+import { completionFollowUpText, formatCompletionPrompt, formatPrompt } from './runtime/conversation.js';
+import {
+  applyRoPE,
+  gatedDeltaRuleStep,
+  geluNew,
+  layerNorm,
+  linear,
+  logitSoftcap,
+  rmsNorm,
+  sampleTopK,
+  silu,
+  softmax,
+  splitHeadGate,
+  yarnRotaryAngle,
+} from './runtime/math.js';
+import {
+  bfloat16ToFloat32,
+  convertAllTensors,
+  copyTensorRow,
+  fetchArrayBuffer,
+  float16ToFloat32,
+  isEmbeddingTensorName,
+  isolateTensorData,
+  rewriteGoogleStorageURL,
+  tensorToFloat32,
+} from './load/tensors.js';
+import {
+  catalogLabel,
+  catalogWeightClass,
+  DEFAULT_MODEL_ID,
+  DESKTOP_RECOMMENDED_MODEL_ID,
+  isMobileCatalogModel,
+  MOBILE_RECOMMENDED_MODEL_ID,
+  MODEL_CATALOG,
+} from './catalog.js';
+import { QwenWeights } from './qwen/QwenWeights.js';
+import { QwenGpuRunner } from './qwen/QwenGpuRunner.js';
+import { loadSafetensorsModel, parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
+import { resolveTensor } from './load/TensorNameMap.js';
+import { UnigramTokenizer } from './load/UnigramTokenizer.js';
+import {
+  closeArray,
+  createTinyKanana,
+  createTinyLlama,
+  createTinyQwen2,
+  createTinyQwenWeights,
+} from './test/helpers.js';
+import type { TensorMap } from './types.js';
+
+function createSafeTensorsFixture(dtype: 'F32' | 'F16' = 'F32', values: number[] = [1, 2, 3, 4]) {
+  const bytesPerElement = dtype === 'F32' ? 4 : 2;
+  const header = {
+    values: {
+      dtype,
+      shape: [2, 2],
+      data_offsets: [0, values.length * bytesPerElement],
+    },
+  };
+  const headerBytes = new TextEncoder().encode(JSON.stringify(header));
+  const buffer = new ArrayBuffer(8 + headerBytes.length + values.length * bytesPerElement);
+  const view = new DataView(buffer);
+
+  view.setUint32(0, headerBytes.length, true);
+  view.setUint32(4, 0, true);
+  new Uint8Array(buffer, 8, headerBytes.length).set(headerBytes);
+
+  for (let i = 0; i < values.length; i++) {
+    if (dtype === 'F32') view.setFloat32(8 + headerBytes.length + i * 4, values[i]!, true);
+    else view.setUint16(8 + headerBytes.length + i * 2, values[i]!, true);
+  }
+
+  return buffer;
+}
+
+describe('MODEL_CATALOG', () => {
+  it('loads public Hugging Face checkpoints and large hosted test models', () => {
+    const ids = MODEL_CATALOG.map((entry) => entry.id);
+    expect(ids).toEqual(['tinystories', 'smollm2', 'qwen3.5-0.8b', 'gemma-3-1b-it']);
+    expect(DEFAULT_MODEL_ID).toBe('smollm2');
+    expect(MOBILE_RECOMMENDED_MODEL_ID).toBe('smollm2');
+    expect(DESKTOP_RECOMMENDED_MODEL_ID).toBe('qwen3.5-0.8b');
+    expect(ids).toContain(DEFAULT_MODEL_ID);
+    for (const entry of MODEL_CATALOG) {
+      expect(entry.url).toMatch(/^https:\/\/huggingface\.co\//);
+      expect(entry.localUrl).toMatch(/^\/api\/models\//);
+      expect(entry.sizeHint).toMatch(/^\d+(\.\d+)? (MB|GB)$/);
+      expect(catalogLabel(entry)).toContain(`[${entry.sizeHint}]`);
+    }
+    expect(catalogWeightClass(MODEL_CATALOG.find((entry) => entry.id === 'tinystories')!)).toBe('small');
+    expect(catalogWeightClass(MODEL_CATALOG.find((entry) => entry.id === 'smollm2')!)).toBe('small');
+    expect(catalogWeightClass(MODEL_CATALOG.find((entry) => entry.id === 'qwen3.5-0.8b')!)).toBe('medium');
+    expect(catalogWeightClass(MODEL_CATALOG.find((entry) => entry.id === 'gemma-3-1b-it')!)).toBe('medium');
+    expect(MODEL_CATALOG.every((entry) => catalogWeightClass(entry) !== 'large')).toBe(true);
+    expect(isMobileCatalogModel(MODEL_CATALOG.find((entry) => entry.id === 'smollm2')!)).toBe(true);
+    expect(isMobileCatalogModel(MODEL_CATALOG.find((entry) => entry.id === 'qwen3.5-0.8b')!)).toBe(false);
+    const qwen = MODEL_CATALOG.find((entry) => entry.id === 'qwen3.5-0.8b');
+    expect(qwen?.badge).toBeUndefined();
+    expect(catalogLabel(qwen!)).toBe('Qwen3.5 0.8B [1.7 GB]');
+  });
+});
+
+describe('rewriteGoogleStorageURL', () => {
+  it('sends GCS objects through the JSON download API', () => {
+    expect(rewriteGoogleStorageURL('https://storage.googleapis.com/three-llm/smollm2-135m/model.safetensors')).toBe(
+      'https://storage.googleapis.com/download/storage/v1/b/three-llm/o/smollm2-135m%2Fmodel.safetensors?alt=media',
+    );
+    expect(rewriteGoogleStorageURL('https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors')).toBe(
+      'https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors',
+    );
+  });
+});
+
+describe('fetchArrayBuffer', () => {
+  it('retries incomplete downloads', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+
+    globalThis.fetch = (async () => {
+      calls++;
+      const body = calls === 1 ? new Uint8Array([1]) : new Uint8Array([1, 2]);
+      return new Response(body, { headers: { 'Content-Length': '2' } });
+    }) as typeof fetch;
+
+    try {
+      const buffer = await fetchArrayBuffer('https://example.test/model.safetensors', 'Test');
+      expect(Array.from(new Uint8Array(buffer))).toEqual([1, 2]);
+      expect(calls).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('downloads large same-origin model files as virtual chunks', async () => {
+    const originalFetch = globalThis.fetch;
+    const total = 24 * 1024 * 1024 + 3;
+    const requested: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+
+      if (init?.method === 'HEAD') {
+        return new Response(null, { headers: { 'Content-Length': String(total) } });
+      }
+
+      const parsed = new URL(url, 'http://localhost');
+      const part = parsed.searchParams.get('part');
+
+      if (part === '0') {
+        return new Response(new Uint8Array(24 * 1024 * 1024).fill(1), {
+          headers: { 'Content-Length': String(24 * 1024 * 1024) },
+        });
+      }
+
+      if (part === '1') {
+        return new Response(new Uint8Array([2, 3, 4]), { headers: { 'Content-Length': '3' } });
+      }
+
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const buffer = await fetchArrayBuffer('/api/models/gpt2/model.safetensors', 'Test');
+      const bytes = new Uint8Array(buffer);
+
+      expect(bytes.byteLength).toBe(total);
+      expect(bytes[0]).toBe(1);
+      expect(bytes[24 * 1024 * 1024]).toBe(2);
+      expect(bytes[total - 1]).toBe(4);
+      expect(requested).toEqual([
+        'HEAD /api/models/gpt2/model.safetensors',
+        'GET /api/models/gpt2/model.safetensors?part=0&partSize=25165824',
+        'GET /api/models/gpt2/model.safetensors?part=1&partSize=25165824',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('uses a known same-origin model size to skip the chunk planning HEAD request', async () => {
+    const originalFetch = globalThis.fetch;
+    const total = 24 * 1024 * 1024 + 3;
+    const requested: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+
+      const parsed = new URL(url, 'http://localhost');
+      const part = parsed.searchParams.get('part');
+
+      if (part === '0') {
+        return new Response(new Uint8Array(24 * 1024 * 1024).fill(1), {
+          headers: { 'Content-Length': String(24 * 1024 * 1024) },
+        });
+      }
+
+      if (part === '1') {
+        return new Response(new Uint8Array([2, 3, 4]), { headers: { 'Content-Length': '3' } });
+      }
+
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const buffer = await fetchArrayBuffer('/api/models/gpt2/model.safetensors', 'Test', undefined, undefined, total);
+      const bytes = new Uint8Array(buffer);
+
+      expect(bytes.byteLength).toBe(total);
+      expect(bytes[0]).toBe(1);
+      expect(bytes[24 * 1024 * 1024]).toBe(2);
+      expect(bytes[total - 1]).toBe(4);
+      expect(requested).toEqual([
+        'GET /api/models/gpt2/model.safetensors?part=0&partSize=25165824',
+        'GET /api/models/gpt2/model.safetensors?part=1&partSize=25165824',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('SafeTensorsLoader', () => {
+  it('uses a single-file checkpoint when model.safetensors exists', async () => {
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url.endsWith('model.safetensors') && init?.method === 'HEAD') {
+        return new Response(null, { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(resolveSafetensorFiles('https://example.test/gpt2/')).resolves.toEqual(['model.safetensors']);
+      expect(requested).toEqual(['HEAD https://example.test/gpt2/model.safetensors']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('heads GCS safetensors through the JSON download API', async () => {
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url.includes('model.safetensors') && init?.method === 'HEAD') {
+        return new Response(null, { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(resolveSafetensorFiles('https://storage.googleapis.com/three-llm/smollm2-135m/')).resolves.toEqual([
+        'model.safetensors',
+      ]);
+      expect(requested).toEqual([
+        'HEAD https://storage.googleapis.com/download/storage/v1/b/three-llm/o/smollm2-135m%2Fmodel.safetensors?alt=media',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('uses website model details JSON for safetensor discovery', async () => {
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+
+      if (url === '/api/model-details/smollm2-135m') {
+        return Response.json({
+          model: 'smollm2-135m',
+          files: [{ name: 'model.safetensors', size: 123 }],
+        });
+      }
+
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(resolveSafetensorFiles('/api/models/smollm2-135m/')).resolves.toEqual(['model.safetensors']);
+      expect(requested).toEqual(['GET /api/model-details/smollm2-135m']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('reads the shard index when model.safetensors is absent', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('model.safetensors') && init?.method === 'HEAD') {
+        return new Response(null, { status: 404 });
+      }
+      if (url.endsWith('model.safetensors.index.json')) {
+        return Response.json({
+          weight_map: {
+            a: 'model.safetensors-1-of-2.safetensors',
+            b: 'model.safetensors-2-of-2.safetensors',
+            c: 'model.safetensors-1-of-2.safetensors',
+          },
+        });
+      }
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(resolveSafetensorFiles('https://example.test/phi-1.5/')).resolves.toEqual([
+        'model.safetensors-1-of-2.safetensors',
+        'model.safetensors-2-of-2.safetensors',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('reports aggregate tensor model data progress', async () => {
+    const originalFetch = globalThis.fetch;
+    const fixture = createSafeTensorsFixture();
+    const progress: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith('model.safetensors') && init?.method === 'HEAD') {
+        return new Response(null, { status: 404 });
+      }
+
+      if (url.endsWith('model.safetensors.index.json')) {
+        return Response.json({
+          weight_map: {
+            a: 'model-00001-of-00002.safetensors',
+            b: 'model-00002-of-00002.safetensors',
+          },
+        });
+      }
+
+      if (init?.method === 'HEAD') {
+        return new Response(null, { headers: { 'Content-Length': String(fixture.byteLength) } });
+      }
+
+      return new Response(fixture.slice(0), { headers: { 'Content-Length': String(fixture.byteLength) } });
+    }) as typeof fetch;
+
+    try {
+      await loadSafetensorsModel('https://example.test/model/', {
+        label: 'Test',
+        onProgress: (message) => progress.push(message),
+      });
+
+      expect(progress.some((message) => message.startsWith('Test: Loading tensor model data, 0 of 2 parts, ('))).toBe(
+        true,
+      );
+      expect(progress.some((message) => message.startsWith('Test: Loading tensor model data, 1 of 2 parts, ('))).toBe(
+        true,
+      );
+      expect(progress.some((message) => message.startsWith('Test: Loading tensor model data, 2 of 2 parts, ('))).toBe(
+        true,
+      );
+      expect(progress.some((message) => message.includes('model-00001-of-00002'))).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('loads same-origin safetensors with sizes from model details JSON', async () => {
+    const originalFetch = globalThis.fetch;
+    const fixture = createSafeTensorsFixture();
+    const requested: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${init?.method ?? 'GET'} ${url}`);
+
+      if (url === '/api/model-details/gpt2') {
+        return Response.json({
+          model: 'gpt2',
+          files: [{ name: 'model.safetensors', size: fixture.byteLength }],
+        });
+      }
+
+      if (url === '/api/models/gpt2/model.safetensors') {
+        return new Response(fixture.slice(0), { headers: { 'Content-Length': String(fixture.byteLength) } });
+      }
+
+      return new Response('Not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const tensors = await loadSafetensorsModel('/api/models/gpt2/', { label: 'Test' });
+
+      expect(Array.from(tensors.values?.data as Float32Array)).toEqual([1, 2, 3, 4]);
+      expect(requested).toEqual(['GET /api/model-details/gpt2', 'GET /api/models/gpt2/model.safetensors']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('parses F32 tensors', () => {
+    const parsed = parseSafeTensors(createSafeTensorsFixture());
+    expect(parsed.tensors.values?.shape).toEqual([2, 2]);
+    expect(parsed.tensors.values?.dtype).toBe('F32');
+    expect(Array.from(parsed.tensors.values?.data as Float32Array)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('parses F16 tensors and rejects truncated data', () => {
+    const parsed = parseSafeTensors(createSafeTensorsFixture('F16', [0x3c00, 0x4000, 0x4200, 0x4400]));
+    expect(parsed.tensors.values?.dtype).toBe('F16');
+    expect(Array.from(parsed.tensors.values?.data as Uint16Array)).toEqual([0x3c00, 0x4000, 0x4200, 0x4400]);
+
+    const truncated = createSafeTensorsFixture().slice(0, -1);
+    expect(() => parseSafeTensors(truncated)).toThrow(/data extends beyond the file/);
+    expect(() => parseSafeTensors(new ArrayBuffer(7))).toThrow(/too small to contain a header/);
+  });
+});
+
+describe('GPT2Tokenizer', () => {
+  it('keeps hash-character BPE merges', () => {
+    const tokenizer = new GPT2Tokenizer(
+      {
+        a: 0,
+        '#': 1,
+        '##': 2,
+        'a#': 3,
+        '<|endoftext|>': 4,
+      },
+      ['#version: 0.2', '# #', 'a #'],
+    );
+
+    expect(tokenizer.bpe('##')).toBe('##');
+    expect(tokenizer.bpe('a#')).toBe('a#');
+    expect(tokenizer.encode('##')).toEqual([2]);
+  });
+
+  it('encodes added special tokens as whole ids', () => {
+    const tokenizer = new GPT2Tokenizer(
+      {
+        a: 0,
+        '<|endoftext|>': 1,
+      },
+      [],
+      {
+        addedTokens: [
+          { id: 10, content: '<|im_start|>' },
+          { id: 11, content: '<think>' },
+          { id: 12, content: '</think>' },
+        ],
+      },
+    );
+
+    expect(tokenizer.encode('<|im_start|><think></think>')).toEqual([10, 11, 12]);
+    expect(tokenizer.decode([10, 11, 12])).toBe('<|im_start|><think></think>');
+  });
+
+  it('supports Qwen, SmolLM, and Llama-3 pre-tokenizer digit behavior', () => {
+    const vocab = {
+      '<|endoftext|>': 0,
+      '1': 1,
+      '2': 2,
+      '3': 3,
+      '12': 5,
+      '123': 4,
+    };
+    const qwen = new GPT2Tokenizer(vocab, [], { tokenPattern: /(?i:'s)|\p{N}/gu });
+    const llama3 = new GPT2Tokenizer(vocab, ['1 2', '12 3'], { tokenPattern: /\p{N}{1,3}/gu });
+
+    expect(qwen.encode('123')).toEqual([1, 2, 3]);
+    expect(llama3.encode('123')).toEqual([4]);
+  });
+});
+
+describe('math', () => {
+  it('computes reference operations', () => {
+    closeArray(
+      linear(new Float32Array([1, 2]), new Float32Array([3, 4, 5, 6]), new Float32Array([7, 8]), 2, 2),
+      new Float32Array([20, 24]),
+      1e-6,
+    );
+    closeArray(
+      linear(new Float32Array([1, 2]), new Float32Array([3, 4, 5, 6]), null, 2, 2),
+      new Float32Array([13, 16]),
+      1e-6,
+    );
+    closeArray(
+      linear(new Float32Array([1, 2]), new Float32Array([1, 0, 0, 1]), new Float32Array([0, 0]), 2, 2),
+      new Float32Array([1, 2]),
+      1e-6,
+    );
+    closeArray(softmax(new Float32Array([1, 2, 3])), new Float32Array([0.09003057, 0.24472848, 0.66524094]), 1e-6);
+    closeArray(softmax(new Float32Array([1, 1, 1])), new Float32Array([1 / 3, 1 / 3, 1 / 3]), 1e-6);
+    closeArray(softmax(new Float32Array([100, 101, 102])), softmax(new Float32Array([0, 1, 2])), 1e-6);
+    const probabilities = softmax(new Float32Array([-5, 0, 2.5]));
+    expect(Array.from(probabilities).reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 6);
+    expect(Math.abs(geluNew(0))).toBeLessThan(1e-6);
+    expect(Math.abs(geluNew(1) - 0.84119199)).toBeLessThan(1e-6);
+    expect(Math.abs(geluNew(20) - 20)).toBeLessThan(1e-4);
+    expect(Math.abs(geluNew(-20))).toBeLessThan(1e-4);
+    expect(sampleTopK(new Float32Array([1, 2, 3]), { topK: 1 })).toBe(2);
+    expect(sampleTopK(new Float32Array([1, 4, 3]), { temperature: 0, topK: 40 })).toBe(1);
+    expect(sampleTopK(new Float32Array([1, 2, 3, 4]), { topK: 2, temperature: 1, random: () => 0 })).toBe(3);
+    expect(sampleTopK(new Float32Array([1, 2, 3, 4]), { temperature: 1e-8, topK: 40, random: () => 0.5 })).toBe(3);
+    expect(sampleTopK(new Float32Array([5, 4]), { temperature: 0, tokens: [0], repetitionPenalty: 2 })).toBe(1);
+    expect(sampleTopK(new Float32Array([3, 2, 1]), { temperature: 0, tokens: [0, 0], frequencyPenalty: 1 })).toBe(1);
+    expect(
+      sampleTopK(new Float32Array([0, 0, 10, 1]), {
+        temperature: 0,
+        tokens: [0, 1, 2, 0, 1],
+        noRepeatNgramSize: 3,
+      }),
+    ).toBe(3);
+    expect(sampleTopK(new Float32Array([5, 4]), { temperature: 0, tokens: [0], repetitionPenalty: 1 })).toBe(0);
+
+    const normalized = layerNorm(
+      new Float32Array([1, 2, 3]),
+      new Float32Array([1, 1, 1]),
+      new Float32Array([0, 0, 0]),
+      1e-5,
+    );
+    closeArray(normalized, new Float32Array([-1.2247356, 0, 1.2247356]), 1e-5);
+
+    const rms = rmsNorm(new Float32Array([1, 2, 3]), new Float32Array([1, 1, 1]));
+    const invRms = 1 / Math.sqrt(14 / 3 + 1e-5);
+    closeArray(rms, new Float32Array([invRms, 2 * invRms, 3 * invRms]), 1e-5);
+    closeArray(
+      rmsNorm(new Float32Array([1, 2, 3]), new Float32Array([0.5, 0, -0.25]), 1e-5, true),
+      new Float32Array([invRms * 1.5, 2 * invRms, 3 * invRms * 0.75]),
+      1e-5,
+    );
+
+    expect(Math.abs(silu(0))).toBeLessThan(1e-6);
+    expect(Math.abs(silu(1) - 0.731058578)).toBeLessThan(1e-6);
+
+    const rope = applyRoPE(new Float32Array([1, 0, 0, 1]), 0, 4, 1, 10000);
+    expect(Math.abs(rope[0]! - Math.cos(1))).toBeLessThan(1e-5);
+    expect(
+      yarnRotaryAngle(4095, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 }),
+    ).toBe(4095);
+    expect(
+      yarnRotaryAngle(4096, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 }),
+    ).toBe(512);
+    expect(
+      yarnRotaryAngle(8192, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 }),
+    ).toBe(1024);
+
+    expect(architectureFor({ model_type: 'gpt2' })).toBe('gpt2');
+    expect(architectureFor({ model_type: 'llama' })).toBe('llama');
+    expect(architectureFor({ model_type: 'phi' })).toBe('phi');
+    expect(architectureFor({ model_type: 'gemma3_text' })).toBe('gemma3');
+    expect(architectureFor({ model_type: 'qwen3_5' })).toBe('qwen3_5');
+    expect(architectureFor({ model_type: 'qwen3_5', text_config: { model_type: 'qwen3_5_text' } })).toBe('qwen3_5');
+    expect(() => architectureFor({ model_type: 'gemma4' })).toThrow(/Unsupported model_type "gemma4"/);
+
+    const mapped = resolveTensor(
+      {
+        'model.layers.0.self_attn.q_proj.weight': { name: 'q', dtype: 'F32', shape: [1], data: new Float32Array(1) },
+      },
+      'model.',
+      'llama',
+      'attn_q',
+      0,
+    );
+    expect(mapped.name).toBe('q');
+
+    const capped = logitSoftcap(new Float32Array([60, -60, 0]), 30);
+    expect(Math.abs(capped[0]! - 30 * Math.tanh(2))).toBeLessThan(1e-5);
+
+    const split = splitHeadGate(new Float32Array([1, 2, 3, 4]), 2, 1);
+    closeArray(split.query, new Float32Array([1, 3]), 1e-6);
+    closeArray(split.gate, new Float32Array([2, 4]), 1e-6);
+
+    const deltaOut = gatedDeltaRuleStep(
+      new Float32Array([1, 0]),
+      new Float32Array([0, 1]),
+      new Float32Array([2, 3]),
+      new Float32Array([0.5]),
+      new Float32Array([1]),
+      new Float32Array(4),
+      { numVHeads: 1, keyDim: 2, valueDim: 2 },
+    );
+    expect(deltaOut.length).toBe(2);
+
+    expect(Math.abs(float16ToFloat32(0x3c00) - 1)).toBeLessThan(1e-6);
+    expect(Math.abs(bfloat16ToFloat32(0x3f80) - 1)).toBeLessThan(1e-6);
+    expect(
+      Math.abs(
+        tensorToFloat32({
+          name: 'w',
+          dtype: 'BF16',
+          shape: [1],
+          data: new Uint16Array([0x4000]),
+        })[0]! - 2,
+      ),
+    ).toBeLessThan(1e-6);
+  });
+});
+
+describe('tensors', () => {
+  it('converts BF16 tensors to F32 with progress', async () => {
+    const tensors: TensorMap = {
+      small: { name: 'small', dtype: 'BF16', shape: [2], data: new Uint16Array([0x3f80, 0x4000]) },
+      left: { name: 'left', dtype: 'F32', shape: [1], data: new Float32Array([9]) },
+    };
+    const messages: string[] = [];
+    const count = await convertAllTensors(tensors, (message) => messages.push(message), 'Test');
+
+    expect(count).toBe(1);
+    const small = tensors.small!;
+    expect(small.dtype).toBe('F32');
+    expect(Math.abs((small.data as Float32Array)[0]! - 1)).toBeLessThan(1e-6);
+    expect(Math.abs((small.data as Float32Array)[1]! - 2)).toBeLessThan(1e-6);
+    expect(tensors.left?.dtype).toBe('F32');
+    expect(messages).toContain('Test: Converting tensor data, 0 B of 4 B');
+    expect(messages).toContain('Test: Converting tensor data, 4 B of 4 B');
+  });
+
+  it('skips embedding tensors during conversion and copies one row at a time', async () => {
+    expect(isEmbeddingTensorName('model.embed_tokens.weight')).toBe(true);
+    expect(isEmbeddingTensorName('transformer.wte.weight')).toBe(true);
+    expect(isEmbeddingTensorName('model.layers.0.mlp.up_proj.weight')).toBe(false);
+
+    const tensors: TensorMap = {
+      'model.embed_tokens.weight': {
+        name: 'model.embed_tokens.weight',
+        dtype: 'BF16',
+        shape: [2, 2],
+        data: new Uint16Array([0x3f80, 0x4000, 0x4040, 0x4080]),
+      },
+      other: { name: 'other', dtype: 'BF16', shape: [1], data: new Uint16Array([0x3f80]) },
+    };
+    const count = await convertAllTensors(tensors, undefined, 'Test', isEmbeddingTensorName);
+    expect(count).toBe(1);
+    expect(tensors['model.embed_tokens.weight']?.dtype).toBe('BF16');
+    expect(tensors.other?.dtype).toBe('F32');
+
+    const row = new Float32Array(2);
+    copyTensorRow(tensors['model.embed_tokens.weight']!, 2, 2, row);
+    closeArray(row, new Float32Array([3, 4]), 1e-5);
+  });
+
+  it('isolates a view into its own buffer', () => {
+    const buffer = new ArrayBuffer(16);
+    new Float32Array(buffer).set([1, 2, 3, 4]);
+    const tensor = {
+      name: 'view',
+      dtype: 'F32',
+      shape: [2],
+      data: new Float32Array(buffer, 8, 2),
+    };
+    isolateTensorData(tensor);
+    expect(tensor.data.byteOffset).toBe(0);
+    expect(Array.from(tensor.data as Float32Array)).toEqual([3, 4]);
+  });
+
+  it('keeps CPU embeddings after releasing unpacked checkpoint tensors', () => {
+    const weights = createTinyLlama();
+    const before = weights.embedding(1, 0);
+    expect(weights.tensors['model.layers.0.self_attn.q_proj.weight']).toBeDefined();
+    weights.releaseCheckpointTensors();
+    expect(weights.tensors['model.layers.0.self_attn.q_proj.weight']).toBeUndefined();
+    closeArray(weights.embedding(1, 0), before, 1e-6);
+  });
+});
+
+describe('DecoderRecipe', () => {
+  it('preserves architecture-specific decode semantics', () => {
+    const gpt2 = recipeFor({
+      model_type: 'gpt2',
+      n_embd: 8,
+      n_head: 2,
+      n_layer: 1,
+      vocab_size: 16,
+    });
+    const phi = recipeFor({
+      model_type: 'phi',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 1,
+      num_attention_heads: 2,
+      vocab_size: 16,
+      partial_rotary_factor: 0.5,
+    });
+    const gemma = recipeFor({
+      model_type: 'gemma3_text',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 6,
+      num_attention_heads: 2,
+      num_key_value_heads: 1,
+      head_dim: 4,
+      vocab_size: 16,
+    });
+    const qwen = recipeFor({
+      model_type: 'qwen3_5_text',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 8,
+      num_attention_heads: 2,
+      num_key_value_heads: 1,
+      head_dim: 4,
+      vocab_size: 16,
+      full_attention_interval: 4,
+    });
+    const mistral = recipeFor({
+      model_type: 'mistral',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 1,
+      num_attention_heads: 2,
+      vocab_size: 16,
+      partial_rotary_factor: 0.5,
+      sliding_window: 32,
+    });
+    const qwen2 = recipeFor({
+      model_type: 'qwen2',
+      _name_or_path: 'Qwen/Qwen2.5-Coder-1.5B-Instruct',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 1,
+      num_attention_heads: 2,
+      vocab_size: 16,
+      use_sliding_window: false,
+      sliding_window: 32,
+    });
+    const qwen3 = recipeFor({
+      model_type: 'qwen3',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 1,
+      num_attention_heads: 2,
+      num_key_value_heads: 1,
+      head_dim: 4,
+      vocab_size: 16,
+    });
+    const kanana = recipeFor({
+      model_type: 'kanana2_tiny',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 4,
+      num_attention_heads: 2,
+      num_key_value_heads: 1,
+      head_dim: 4,
+      vocab_size: 16,
+      rope_scaling: { rope_type: 'yarn', factor: 8, original_max_position_embeddings: 4096 },
+      max_position_embeddings: 32768,
+    });
+
+    expect(gpt2.position).toBe('learned');
+    expect(gpt2.packedQKV).toBe(true);
+    expect(phi.residual).toBe('parallel');
+    expect(phi.rotaryDim).toBe(2);
+    expect(gemma.norm).toBe('rms_offset');
+    expect(gemma.layerTypes?.[5]).toBe('full_attention');
+    expect(qwen.layerTypes?.[0]).toBe('linear_attention');
+    expect(qwen.layerTypes?.[3]).toBe('full_attention');
+    expect(mistral.rotaryDim).toBe(2);
+    expect(mistral.slidingWindow).toBe(32);
+    expect(qwen2.tokenizer).toBe('qwen');
+    expect(qwen2.slidingWindow).toBe(0);
+    expect(qwen2.chatTemplate).toBe('qwen2');
+    expect(qwen3.qkNorm).toBe(true);
+    expect(qwen3.chatTemplate).toBe('qwen3');
+    expect(kanana.tokenizer).toBe('llama3');
+    expect(kanana.layerTypes).toEqual([
+      'sliding_attention',
+      'sliding_attention',
+      'sliding_attention',
+      'full_attention',
+    ]);
+    expect(kanana.yarn?.factor).toBe(8);
+    expect(() => architectureFor({ model_type: 'gemma2' })).toThrow(/Unsupported model_type "gemma2"/);
+  });
+});
+
+describe('generate', () => {
+  it('reuses a matching prompt cache prefix', () => {
+    expect(sharedPrefixLength([1, 2, 3], [1, 2, 9])).toBe(2);
+    expect(sharedPrefixLength([1, 2], [1, 2, 3])).toBe(2);
+
+    const append = planPromptCache([1, 2, 3], new Float32Array([0]), [1, 2, 3, 4], true);
+    expect(append.start).toBe(3);
+    expect(append.reset).toBe(false);
+    expect(append.logits).not.toBeNull();
+
+    const rewind = planPromptCache([1, 2, 3, 9], new Float32Array([0]), [1, 2, 4], true);
+    expect(rewind.start).toBe(2);
+    expect(rewind.reset).toBe(false);
+
+    const recurrent = planPromptCache([1, 2, 3, 9], new Float32Array([0]), [1, 2, 4], false);
+    expect(recurrent.reset).toBe(true);
+  });
+
+  it('accepts an explicit zero-token budget', () => {
+    const prepared = prepareGenerationFromTokens([1, 2], 8, 0, 0);
+    let requestedNewTokens: number | undefined;
+    const runner = {
+      maxTokens: 8,
+      weights: {
+        endOfTextTokenId: 0,
+        prepareGeneration(_prompt: string, _maxTokens: number, maxNewTokens: number) {
+          requestedNewTokens = maxNewTokens;
+          return { inputTokens: [1], newTokenBudget: maxNewTokens };
+        },
+        tokenizer: { decode: () => '' },
+      },
+    };
+
+    generateSync(
+      runner as never,
+      'prompt',
+      { maxNewTokens: 0 },
+      {
+        rewindable: true,
+        resetCache() {},
+        forwardToken: () => new Float32Array([0, 1]),
+      },
+    );
+
+    expect(prepared.inputTokens).toEqual([1, 2]);
+    expect(prepared.newTokenBudget).toBe(0);
+    expect(requestedNewTokens).toBe(0);
+  });
+
+  it('reports async prefill progress', async () => {
+    const progress: number[] = [];
+    const computed: number[][] = [];
+    const runner = {
+      maxTokens: 8,
+      weights: {
+        endOfTextTokenId: 0,
+        tokenizer: { decode: (tokens: number[]) => tokens.join(',') },
+        prepareGeneration() {
+          return { inputTokens: [1, 2, 3, 4], newTokenBudget: 1 };
+        },
+      },
+    };
+
+    const result = await generateAsync(
+      runner as never,
+      'prompt',
+      {
+        temperature: 0,
+        topK: 1,
+        onPrefillProgress: (event) => {
+          progress.push(event.completedPromptTokens!);
+        },
+      },
+      {
+        rewindable: true,
+        resetCache() {},
+        async prefillTokens(inputTokens, start, end, onProgress) {
+          expect(inputTokens).toEqual([1, 2, 3, 4]);
+          expect(start).toBe(0);
+          expect(end).toBe(3);
+          await onProgress(2);
+          await onProgress(3);
+        },
+        async computeToken(tokenId, position) {
+          computed.push([tokenId, position]);
+        },
+        async readLogits() {
+          return new Float32Array([0, 1]);
+        },
+      },
+    );
+
+    expect(progress).toEqual([2, 3, 4]);
+    expect(computed).toEqual([
+      [4, 3],
+      [1, 4],
+    ]);
+    expect(result.generatedTokens).toEqual([1]);
+  });
+});
+
+describe('UnigramTokenizer', () => {
+  it('encodes Hugging Face BPE vocabs', () => {
+    const tokenizer = new UnigramTokenizer(
+      {
+        model: {
+          type: 'BPE',
+          byte_fallback: true,
+          unk_token: '<unk>',
+          vocab: {
+            '<unk>': 0,
+            '<eos>': 1,
+            '<bos>': 2,
+            '▁': 3,
+            h: 4,
+            e: 5,
+            l: 6,
+            o: 7,
+            he: 8,
+            '▁he': 9,
+            ll: 10,
+            'o▁': 11,
+          },
+          merges: [
+            ['h', 'e'],
+            ['l', 'l'],
+            ['▁', 'he'],
+          ],
+        },
+      },
+      { bos_token_id: 2, eos_token_id: 1, add_bos_token: true },
+    );
+
+    expect(tokenizer.useBpe).toBe(true);
+    expect(tokenizer.encode('he')).toEqual([2, 8]);
+    expect(tokenizer.decode([2, 9, 10])).toBe('hell');
+  });
+
+  it('isolates added tokens before tokenizer.json BPE', () => {
+    const tokenizer = new UnigramTokenizer(
+      {
+        model: {
+          type: 'BPE',
+          byte_fallback: true,
+          unk_token: '<unk>',
+          vocab: {
+            '<unk>': 0,
+            '<eos>': 1,
+            '<bos>': 2,
+            '▁': 3,
+            h: 4,
+            i: 5,
+          },
+          merges: [],
+        },
+        added_tokens: [{ id: 10, content: '<start_of_turn>', special: true }],
+      },
+      { bos_token_id: 2, eos_token_id: [1, 10], add_bos_token: false },
+    );
+
+    expect(tokenizer.encode('<start_of_turn> hi')).toEqual([10, 3, 4, 5]);
+    expect(tokenizer.stopTokenIds).toEqual([1, 10]);
+  });
+
+  it('round-trips metaspace text and prepends BOS', () => {
+    const tokenizer = new UnigramTokenizer(
+      {
+        model: {
+          type: 'Unigram',
+          unk_id: 0,
+          vocab: [
+            ['<unk>', 0],
+            ['<eos>', 0],
+            ['<bos>', 0],
+            ['▁hello', -1],
+            ['▁world', -2],
+            ['▁', -4],
+          ],
+        },
+      },
+      { bos_token_id: 2, eos_token_id: 1, add_bos_token: true },
+    );
+
+    expect(tokenizer.encode('hello world')).toEqual([2, 3, 4]);
+    expect(tokenizer.decode([2, 3, 4])).toBe('hello world');
+  });
+});
+
+describe('conversation prompt', () => {
+  it('feeds completion models the raw user text instead of a chat wrap', () => {
+    const prompt = 'Paris was beautiful in the fall.';
+    const turns = [{ role: 'user' as const, text: prompt }];
+    expect(formatPrompt({}, turns)).toBe(prompt);
+    expect(formatCompletionPrompt(turns)).toBe(prompt);
+    expect(
+      formatCompletionPrompt([
+        { role: 'user', text: prompt },
+        { role: 'assistant', text: '\n\n"I was in the middle' },
+        { role: 'user', text: 'She kept walking.' },
+      ]),
+    ).toBe(`${prompt}\n\n"I was in the middle\n\nShe kept walking.`);
+    expect(completionFollowUpText('She kept walking.')).toBe('\n\nShe kept walking.');
+    expect(formatPrompt({}, turns)).not.toContain('Assistant:');
+  });
+
+  it('keeps chat-template models on formatChat', () => {
+    const weights = createTinyQwenWeights();
+    expect(formatPrompt(weights, [{ role: 'user', text: 'Hi' }])).toBe(
+      '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n',
+    );
+  });
+
+  it('formats shared instruct templates', () => {
+    expect(formatChatTemplate('qwen3', [{ role: 'user', text: 'Hi' }])).toBe(
+      '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n',
+    );
+    expect(formatChatTemplate('gemma3', [{ role: 'user', text: 'Hi' }])).toBe(
+      '<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n',
+    );
+    expect(formatChatTemplate('kanana', [{ role: 'user', text: 'Hi' }])).toBe(
+      '<|start_header_id|>user<|end_header_id|>\n\nHi<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n',
+    );
+  });
+});
+
+describe('DecoderWeights dense model support', () => {
+  it('packs optional Qwen2 QKV projection biases and stop tokens', () => {
+    const weights = createTinyQwen2();
+    const block = weights.block(0);
+
+    expect(weights.recipe.tokenizer).toBe('qwen');
+    expect(weights.recipe.slidingWindow).toBe(0);
+    expect(block.attnQKVBias?.length).toBe(weights.qSize + 2 * weights.kvSize);
+    expect(weights.stopTokenIds).toContain(0);
+    expect(weights.stopTokenIds).toContain(7);
+    expect(weights.formatChat?.([{ role: 'user', text: 'Hi' }])).toBe(
+      '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n',
+    );
+  });
+
+  it('uses Kanana per-layer sliding/full attention and QK norm', () => {
+    const weights = createTinyKanana();
+
+    expect(weights.contextLimit()).toBe(2048);
+    expect(weights.block(0).slidingWindow).toBe(1024);
+    expect(weights.block(0).yarn).toBeUndefined();
+    expect(weights.block(3).slidingWindow).toBe(0);
+    expect(weights.block(3).yarn?.factor).toBe(8);
+    expect(weights.block(3).qNormWeight).toBeDefined();
+    expect(weights.block(3).kNormWeight).toBeDefined();
+  });
+});
+
+describe('QwenWeights', () => {
+  it('formats chat with thinking disabled by default', () => {
+    const weights = createTinyQwenWeights();
+    const messages = [{ role: 'user' as const, text: 'Hi' }];
+    expect(weights.formatChat(messages)).toBe(
+      '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n',
+    );
+    expect(weights.formatChat(messages, { enableThinking: true })).toBe(
+      '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n',
+    );
+  });
+
+  it('forwards loader options through QwenGpuRunner.fromURL', async () => {
+    const originalFromURL = QwenWeights.fromURL;
+    const options = { maxTokens: 7, onProgress() {} };
+    let receivedOptions: unknown;
+    QwenWeights.fromURL = (async (baseURL: string, loaderOptions) => {
+      expect(baseURL).toBe('/model/');
+      receivedOptions = loaderOptions;
+      return createTinyQwenWeights();
+    }) as typeof QwenWeights.fromURL;
+
+    try {
+      const gpu = await initMockGpu();
+      const runner = await QwenGpuRunner.fromURL(gpu, '/model/', options);
+      expect(receivedOptions).toBe(options);
+      expect(runner.maxTokens).toBe(7);
+    } finally {
+      QwenWeights.fromURL = originalFromURL;
+    }
+  });
+});

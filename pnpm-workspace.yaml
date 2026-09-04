@@ -4,7 +4,9 @@ packages:
 allowBuilds:
   '@parcel/watcher': false
   '@sentry/cli': true
+  '@vgpu/adapter-node': true
   esbuild: true
+  webgpu: true
 
 link-workspace-packages: true
 
@@ -30,3 +32,9 @@ minimumReleaseAgeExclude:
   - '@typescript/typescript-win32-arm64@7.0.2'
   - '@typescript/typescript-win32-x64@7.0.2'
   - typescript@7.0.2
+  - '@vgpu/adapter-mock@0.4.0'
+  - '@vgpu/adapter-node@0.4.0'
+  - '@vgpu/core@0.4.0'
+  - '@vgpu/wgsl-std@0.4.0'
+  - '@vgpu/wgsl@0.4.0'
+  - vgpu@0.4.0
