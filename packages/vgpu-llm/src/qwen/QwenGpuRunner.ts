@@ -1,4 +1,11 @@
-import { allocStorage, makeCompute, uploadStorage, workgroupCount, writeBuffer } from '../gpu/device.js';
+import {
+  allocStorage,
+  makeCompute,
+  requireShaderF16,
+  uploadWeightStorage,
+  workgroupCount,
+  writeBuffer,
+} from '../gpu/device.js';
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import { generateAsync } from '../runtime/generate.js';
 import { AddKernel } from '../kernels/AddKernel.js';
@@ -17,7 +24,14 @@ import type { LogitChunk } from '../kernels/LogitsKernel.js';
 import { RMSNormKernel } from '../kernels/RMSNormKernel.js';
 import { SplitHeadGateKernel } from '../kernels/SplitHeadGateKernel.js';
 import { QwenWeights } from './QwenWeights.js';
-import type { GenerateOptions, GenerationResult, LoaderOptions, RunnerOptions, SampleOptions } from '../types.js';
+import type {
+  GenerateOptions,
+  GenerationResult,
+  LoaderOptions,
+  Precision,
+  RunnerOptions,
+  SampleOptions,
+} from '../types.js';
 
 interface FullAttentionMixer {
   qGate: LinearKernel;
@@ -54,6 +68,7 @@ class QwenGpuRunner {
   logitChunkSize: number;
   prefillChunkSize: number;
   hiddenSize: number;
+  precision: Precision;
 
   embeddingBuffer: StorageBuffer;
   embeddingScratch: Float32Array;
@@ -81,6 +96,8 @@ class QwenGpuRunner {
     this.logitChunkSize = options.logitChunkSize || 8192;
     this.prefillChunkSize = options.prefillChunkSize || 32;
     this.hiddenSize = weights.hiddenSize;
+    this.precision = options.precision || 'fp32';
+    if (this.precision === 'fp16') requireShaderF16(gpu, 'QwenGpuRunner');
 
     this.embeddingScratch = new Float32Array(this.hiddenSize);
     this.embeddingBuffer = allocStorage(gpu, this.hiddenSize);
@@ -138,12 +155,19 @@ class QwenGpuRunner {
     for (let i = 0; i < weights.layerCount; i++) {
       const block = weights.block(i);
       const name = `QwenLayer${i}`;
-      const ln1 = new RMSNormKernel(gpu, currentBuffer, uploadStorage(gpu, block.ln1Weight!), this.hiddenSize, {
-        epsilon: weights.rmsNormEps,
-        offsetWeight: true,
-        name: `${name}LN1`,
-        workgroupSize: this.workgroupSize,
-      });
+      const ln1 = new RMSNormKernel(
+        gpu,
+        currentBuffer,
+        uploadWeightStorage(gpu, block.ln1Weight!, this.precision),
+        this.hiddenSize,
+        {
+          epsilon: weights.rmsNormEps,
+          offsetWeight: true,
+          name: `${name}LN1`,
+          workgroupSize: this.workgroupSize,
+          precision: this.precision,
+        },
+      );
 
       let mixer: QwenMixer;
 
@@ -158,6 +182,7 @@ class QwenGpuRunner {
           kernelSize: weights.linearConvKernel,
           epsilon: weights.rmsNormEps,
           workgroupSize: this.workgroupSize,
+          precision: this.precision,
         });
       } else {
         const qGate = new LinearKernel(
@@ -170,6 +195,7 @@ class QwenGpuRunner {
           {
             name: `${name}QGate`,
             workgroupSize: this.workgroupSize,
+            precision: this.precision,
           },
         );
         const split = new SplitHeadGateKernel(gpu, qGate.outputBuffer, weights.headCount, weights.headDim, {
@@ -186,6 +212,7 @@ class QwenGpuRunner {
           {
             name: `${name}KV`,
             workgroupSize: this.workgroupSize,
+            precision: this.precision,
           },
         );
         const packed = new ConcatKernel(
@@ -228,6 +255,7 @@ class QwenGpuRunner {
           {
             name: `${name}AttnProj`,
             workgroupSize: this.workgroupSize,
+            precision: this.precision,
           },
         );
 
@@ -257,13 +285,14 @@ class QwenGpuRunner {
       const ln2 = new RMSNormKernel(
         gpu,
         addAttention.outputBuffer,
-        uploadStorage(gpu, block.ln2Weight!),
+        uploadWeightStorage(gpu, block.ln2Weight!, this.precision),
         this.hiddenSize,
         {
           epsilon: weights.rmsNormEps,
           offsetWeight: true,
           name: `${name}LN2`,
           workgroupSize: this.workgroupSize,
+          precision: this.precision,
         },
       );
       const mlp = new GatedMLPKernel(
@@ -278,6 +307,7 @@ class QwenGpuRunner {
           name: `${name}MLP`,
           workgroupSize: this.workgroupSize,
           activation: weights.mlpActivation,
+          precision: this.precision,
         },
       );
       const addMLP = new AddKernel(gpu, addAttention.outputBuffer, mlp.outputBuffer, this.hiddenSize, {
@@ -292,13 +322,14 @@ class QwenGpuRunner {
     this.finalNorm = new RMSNormKernel(
       gpu,
       currentBuffer,
-      uploadStorage(gpu, weights.outputNormWeight!),
+      uploadWeightStorage(gpu, weights.outputNormWeight!, this.precision),
       this.hiddenSize,
       {
         epsilon: weights.rmsNormEps,
         offsetWeight: true,
         name: 'QwenFinalNorm',
         workgroupSize: this.workgroupSize,
+        precision: this.precision,
       },
     );
     this.logits = createChunkedLogitLayers(
@@ -307,6 +338,7 @@ class QwenGpuRunner {
       weights,
       this.logitChunkSize,
       'QwenLogits',
+      this.precision,
     );
     weights.logitWeight = null;
     this.logitSampler = createLogitSampler(gpu, this.logits, {

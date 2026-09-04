@@ -16,6 +16,7 @@ moved from Three.js/TSL to `vgpu`)
 ## Features
 
 - WebGPU inference through `vgpu` WGSL compute kernels
+- Opt-in `fp16` weight storage (half the GPU memory/bandwidth) on devices with the `shader-f16` feature
 - CPU reference runners for testing and validation
 - Prompt caching, chunked prefill, streaming token callbacks, and GPU sampling
 - GPT-2, Llama-style, Gemma 3, Phi, and Qwen 3.5 decoder architectures
@@ -65,6 +66,23 @@ console.log(result.generatedText);
 ```
 
 For multi-turn chat, pass formatted messages with `formatPrompt` from `vgpu-llm`. For catalog entries and URL resolution, import `MODEL_CATALOG` and `resolveModelURL` from `vgpu-llm/catalog`.
+
+### fp16 weight storage (opt-in)
+
+Weight buffers can be stored as native WGSL `f16` instead of `f32`, halving their GPU memory footprint and upload/read bandwidth (compute still happens in `f32`, so this narrows storage, not accuracy at runtime). It requires the device's `shader-f16` feature:
+
+```ts
+import { createGpuRunner, hasShaderF16 } from 'vgpu-llm';
+import { init } from 'vgpu';
+
+const gpu = await init({ requiredFeatures: ['shader-f16'] });
+
+const runner = await createGpuRunner(gpu, modelURL, {
+  precision: hasShaderF16(gpu) ? 'fp16' : 'fp32',
+});
+```
+
+Passing `precision: 'fp16'` to a `Gpu` created without the feature throws immediately with a clear error, rather than silently falling back to `fp32`.
 
 ## Run the demo locally
 

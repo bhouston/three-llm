@@ -1,4 +1,11 @@
-import { allocStorage, makeCompute, uploadStorage, workgroupCount, writeBuffer } from '../gpu/device.js';
+import {
+  allocStorage,
+  makeCompute,
+  requireShaderF16,
+  uploadWeightStorage,
+  workgroupCount,
+  writeBuffer,
+} from '../gpu/device.js';
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import { DecoderWeights } from './DecoderWeights.js';
 import { generateAsync } from '../runtime/generate.js';
@@ -23,6 +30,7 @@ import type {
   GenerateOptions,
   GenerationResult,
   LoaderOptions,
+  Precision,
   RunnerOptions,
   SampleOptions,
 } from '../types.js';
@@ -60,6 +68,7 @@ class DecoderGpuRunner {
   logitChunkSize: number;
   prefillChunkSize: number;
   hiddenSize: number;
+  precision: Precision;
 
   embeddingBuffer: StorageBuffer;
   embeddingScratch: Float32Array;
@@ -88,6 +97,8 @@ class DecoderGpuRunner {
     this.logitChunkSize = options.logitChunkSize || 8192;
     this.prefillChunkSize = options.prefillChunkSize || 32;
     this.hiddenSize = weights.hiddenSize;
+    this.precision = options.precision || 'fp32';
+    if (this.precision === 'fp16') requireShaderF16(gpu, `${weights.architecture}DecoderGpuRunner`);
 
     this.embeddingScratch = new Float32Array(this.hiddenSize);
     this.embeddingBuffer = allocStorage(gpu, this.hiddenSize);
@@ -158,6 +169,7 @@ class DecoderGpuRunner {
       weights,
       this.logitChunkSize,
       `${weights.architecture}Logits`,
+      this.precision,
     );
     weights.logitWeight = null;
     this.logitSampler = createLogitSampler(gpu, this.logits, {
@@ -184,21 +196,28 @@ class DecoderGpuRunner {
     name: string,
   ): NormKernel {
     if (this.recipe.norm === 'layer_norm') {
-      const weightBuffer = uploadStorage(this.gpu, weight!, 'read');
-      const biasBuffer = uploadStorage(this.gpu, bias ?? new Float32Array(this.hiddenSize), 'read');
+      const weightBuffer = uploadWeightStorage(this.gpu, weight!, this.precision, 'read');
+      const biasBuffer = uploadWeightStorage(
+        this.gpu,
+        bias ?? new Float32Array(this.hiddenSize),
+        this.precision,
+        'read',
+      );
       return new NormalizeKernel(this.gpu, inputBuffer, weightBuffer, biasBuffer, this.hiddenSize, {
         epsilon: this.recipe.normEps,
         name,
         workgroupSize: this.workgroupSize,
+        precision: this.precision,
       });
     }
 
-    const weightBuffer = uploadStorage(this.gpu, weight!, 'read');
+    const weightBuffer = uploadWeightStorage(this.gpu, weight!, this.precision, 'read');
     return new RMSNormKernel(this.gpu, inputBuffer, weightBuffer, this.hiddenSize, {
       epsilon: this.recipe.normEps,
       offsetWeight: this.recipe.norm === 'rms_offset',
       name,
       workgroupSize: this.workgroupSize,
+      precision: this.precision,
     });
   }
 
@@ -239,6 +258,7 @@ class DecoderGpuRunner {
         {
           name: `${name}QKV`,
           workgroupSize: this.workgroupSize,
+          precision: this.precision,
         },
       );
       const attention = this.buildAttention(qkv.outputBuffer, block, name);
@@ -252,6 +272,7 @@ class DecoderGpuRunner {
         {
           name: `${name}AttnProj`,
           workgroupSize: this.workgroupSize,
+          precision: this.precision,
         },
       );
       const mlp = new MLPKernel(
@@ -266,6 +287,7 @@ class DecoderGpuRunner {
         {
           name: `${name}MLP`,
           workgroupSize: this.workgroupSize,
+          precision: this.precision,
         },
       );
       const addAttention = new AddKernel(this.gpu, residualBuffer, attnProj.outputBuffer, this.hiddenSize, {
@@ -302,6 +324,7 @@ class DecoderGpuRunner {
       {
         name: `${name}QKV`,
         workgroupSize: this.workgroupSize,
+        precision: this.precision,
       },
     );
     const attention = this.buildAttention(qkv.outputBuffer, block, name);
@@ -316,6 +339,7 @@ class DecoderGpuRunner {
       {
         name: `${name}AttnProj`,
         workgroupSize: this.workgroupSize,
+        precision: this.precision,
       },
     );
 
@@ -338,6 +362,7 @@ class DecoderGpuRunner {
           name: `${name}MLP`,
           workgroupSize: this.workgroupSize,
           activation: recipe.mlpActivation,
+          precision: this.precision,
         },
       );
       const postMlpNorm = this.buildNorm(mlp.outputBuffer, block.postMlpNormWeight, null, `${name}PostMLP`);
@@ -381,6 +406,7 @@ class DecoderGpuRunner {
             {
               name: `${name}MLP`,
               workgroupSize: this.workgroupSize,
+              precision: this.precision,
             },
           )
         : new GatedMLPKernel(
@@ -395,6 +421,7 @@ class DecoderGpuRunner {
               name: `${name}MLP`,
               workgroupSize: this.workgroupSize,
               activation: recipe.mlpActivation,
+              precision: this.precision,
             },
           );
     const addMLP = new AddKernel(this.gpu, addAttention.outputBuffer, mlp.outputBuffer, this.hiddenSize, {

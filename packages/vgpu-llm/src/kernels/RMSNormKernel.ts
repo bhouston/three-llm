@@ -1,4 +1,11 @@
-import { allocStorage, makeCompute, workgroupCount } from '../gpu/device.js';
+import {
+  allocStorage,
+  makeCompute,
+  requireShaderF16,
+  wgslEnableDirective,
+  wgslScalarType,
+  workgroupCount,
+} from '../gpu/device.js';
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import type { KernelOptions } from '../types.js';
 
@@ -11,6 +18,10 @@ interface RMSNormOptions extends KernelOptions {
  * RMS normalization for a single hidden vector.
  *
  * Llama scales by `weight`. Gemma scales by `1 + weight`.
+ *
+ * `weightBuffer` must already be uploaded at `options.precision` (default
+ * `fp32`) — e.g. via `uploadWeightStorage` — since this kernel only picks
+ * the matching WGSL element type for it; it does not own the upload.
  */
 class RMSNormKernel {
   hiddenSize: number;
@@ -34,11 +45,16 @@ class RMSNormKernel {
     this.weightBuffer = weightBuffer;
     this.outputBuffer = allocStorage(gpu, hiddenSize);
 
+    const precision = options.precision || 'fp32';
+    if (precision === 'fp16') requireShaderF16(gpu, options.name || 'LLMRMSNorm');
+
+    const weightType = wgslScalarType(precision);
     const workgroupSize = options.workgroupSize || 64;
-    const scaleExpr = this.offsetWeight ? 'weight[index] + 1.0' : 'weight[index]';
+    const scaleExpr = this.offsetWeight ? 'f32(weight[index]) + 1.0' : 'f32(weight[index])';
     const source = `
+      ${wgslEnableDirective(precision)}
       @group(0) @binding(0) var<storage, read> input: array<f32>;
-      @group(0) @binding(1) var<storage, read> weight: array<f32>;
+      @group(0) @binding(1) var<storage, read> weight: array<${weightType}>;
       @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 
       @compute @workgroup_size(${workgroupSize})

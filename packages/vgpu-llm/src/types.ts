@@ -2,6 +2,16 @@ import type { Gpu, StorageBuffer } from 'vgpu';
 
 export type ProgressCallback = (message: string) => void;
 
+/**
+ * Storage precision for kernel weight buffers. `fp32` (default) is always
+ * available. `fp16` uses native WGSL `f16` storage (half the bytes, half
+ * the upload/read bandwidth) and requires the device to have been created
+ * with the `shader-f16` feature — see `hasShaderF16`/`requireShaderF16` in
+ * `gpu/device.js`. Accumulation still happens in `f32`; only weight storage
+ * narrows, so this is a memory/bandwidth optimization, not a compute one.
+ */
+export type Precision = 'fp32' | 'fp16';
+
 export type Architecture = 'gpt2' | 'llama' | 'gemma3' | 'phi' | 'qwen3_5';
 
 export type GraphFamily = 'decoder' | 'qwen35';
@@ -57,6 +67,8 @@ export interface RunnerOptions extends LoaderOptions {
   logitChunkSize?: number;
   prefillChunkSize?: number;
   logitCandidateCount?: number;
+  /** Opt in to `fp16` weight storage; requires a `Gpu` created with the `shader-f16` feature. Defaults to `fp32`. */
+  precision?: Precision;
 }
 
 export interface SampleOptions {
@@ -265,6 +277,8 @@ export interface GPT2TokenizerOptions {
 export interface KernelOptions {
   name?: string;
   workgroupSize?: number;
+  /** Opt in to `fp16` weight storage for this kernel; requires the `shader-f16` device feature. Defaults to `fp32`. */
+  precision?: Precision;
 }
 
 export interface AttentionKernelOptions extends KernelOptions {

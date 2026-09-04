@@ -26,6 +26,7 @@ class MLPKernel {
     this.fc = new LinearKernel(gpu, inputBuffer, fcWeight, fcBias ?? null, hiddenSize, innerSize, {
       name: options.name ? `${options.name}FC` : 'LLMMLPFC',
       workgroupSize: options.workgroupSize,
+      precision: options.precision,
     });
 
     this.gelu = new GELUKernel(gpu, this.fc.outputBuffer, innerSize, {
@@ -36,6 +37,7 @@ class MLPKernel {
     this.proj = new LinearKernel(gpu, this.gelu.outputBuffer, projWeight, projBias ?? null, innerSize, hiddenSize, {
       name: options.name ? `${options.name}Proj` : 'LLMMLPProj',
       workgroupSize: options.workgroupSize,
+      precision: options.precision,
     });
 
     this.outputBuffer = this.proj.outputBuffer;

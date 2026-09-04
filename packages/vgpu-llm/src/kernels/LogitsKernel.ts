@@ -2,7 +2,7 @@ import { allocStorage, makeCompute, readFloat32, readUint32, workgroupCount } fr
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import { LinearKernel } from './LinearKernel.js';
 import { sampleTopKCandidates } from '../runtime/math.js';
-import type { KernelOptions, SampleOptions } from '../types.js';
+import type { KernelOptions, Precision, SampleOptions } from '../types.js';
 
 const LOWEST_FLOAT = -3.4028234663852886e38;
 
@@ -39,6 +39,7 @@ function createChunkedLogitLayers(
   weights: LogitWeights,
   chunkSize: number,
   name: string,
+  precision?: Precision,
 ): LogitChunk[] {
   const logits: LogitChunk[] = [];
   const hiddenSize = weights.hiddenSize;
@@ -58,6 +59,7 @@ function createChunkedLogitLayers(
       layer: new LinearKernel(gpu, inputBuffer, chunkWeight, null, hiddenSize, size, {
         name: `${name}${offset}`,
         workgroupSize: 256,
+        precision,
       }),
     });
   }

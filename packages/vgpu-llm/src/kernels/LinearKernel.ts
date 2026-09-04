@@ -1,4 +1,12 @@
-import { allocStorage, makeCompute, uploadStorage, workgroupCount } from '../gpu/device.js';
+import {
+  allocStorage,
+  makeCompute,
+  requireShaderF16,
+  uploadWeightStorage,
+  wgslEnableDirective,
+  wgslScalarType,
+  workgroupCount,
+} from '../gpu/device.js';
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import type { KernelOptions } from '../types.js';
 
@@ -6,7 +14,10 @@ import type { KernelOptions } from '../types.js';
  * One-token dense layer implemented as a compute pass.
  *
  * Weight layout is `[inputSize, outputSize]`, matching GPT-2 Conv1D tensors
- * stored by Hugging Face.
+ * stored by Hugging Face. `options.precision` (default `fp32`) controls the
+ * weight/bias storage type — `fp16` halves their GPU memory and
+ * upload/read bandwidth; the input, output, and internal accumulation stay
+ * `f32` either way.
  */
 class LinearKernel {
   inputSize: number;
@@ -29,15 +40,20 @@ class LinearKernel {
     this.inputSize = inputSize;
     this.outputSize = outputSize;
 
-    this.weightBuffer = uploadStorage(gpu, weightArray, 'read');
-    this.biasBuffer = uploadStorage(gpu, biasArray || new Float32Array(outputSize), 'read');
+    const precision = options.precision || 'fp32';
+    if (precision === 'fp16') requireShaderF16(gpu, options.name || 'LLMLinear');
+
+    const weightType = wgslScalarType(precision);
+    this.weightBuffer = uploadWeightStorage(gpu, weightArray, precision, 'read');
+    this.biasBuffer = uploadWeightStorage(gpu, biasArray || new Float32Array(outputSize), precision, 'read');
     this.outputBuffer = allocStorage(gpu, outputSize);
 
     const workgroupSize = options.workgroupSize || 64;
     const source = `
+      ${wgslEnableDirective(precision)}
       @group(0) @binding(0) var<storage, read> input: array<f32>;
-      @group(0) @binding(1) var<storage, read> weight: array<f32>;
-      @group(0) @binding(2) var<storage, read> bias: array<f32>;
+      @group(0) @binding(1) var<storage, read> weight: array<${weightType}>;
+      @group(0) @binding(2) var<storage, read> bias: array<${weightType}>;
       @group(0) @binding(3) var<storage, read_write> output: array<f32>;
 
       @compute @workgroup_size(${workgroupSize})
@@ -45,9 +61,9 @@ class LinearKernel {
         let outputIndex = id.x;
         if (outputIndex >= ${outputSize}u) { return; }
 
-        var sum: f32 = bias[outputIndex];
+        var sum: f32 = f32(bias[outputIndex]);
         for (var i: u32 = 0u; i < ${inputSize}u; i = i + 1u) {
-          sum = sum + input[i] * weight[i * ${outputSize}u + outputIndex];
+          sum = sum + input[i] * f32(weight[i * ${outputSize}u + outputIndex]);
         }
         output[outputIndex] = sum;
       }

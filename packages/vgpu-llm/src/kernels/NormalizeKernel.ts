@@ -1,4 +1,11 @@
-import { allocStorage, makeCompute, workgroupCount } from '../gpu/device.js';
+import {
+  allocStorage,
+  makeCompute,
+  requireShaderF16,
+  wgslEnableDirective,
+  wgslScalarType,
+  workgroupCount,
+} from '../gpu/device.js';
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import type { KernelOptions } from '../types.js';
 
@@ -8,6 +15,10 @@ interface NormalizeOptions extends KernelOptions {
 
 /**
  * Layer normalization for a single hidden vector.
+ *
+ * `weightBuffer`/`biasBuffer` must already be uploaded at `options.precision`
+ * (default `fp32`) — e.g. via `uploadWeightStorage` — since this kernel only
+ * picks the matching WGSL element type for them; it does not own the upload.
  */
 class NormalizeKernel {
   hiddenSize: number;
@@ -32,11 +43,16 @@ class NormalizeKernel {
     this.biasBuffer = biasBuffer;
     this.outputBuffer = allocStorage(gpu, hiddenSize);
 
+    const precision = options.precision || 'fp32';
+    if (precision === 'fp16') requireShaderF16(gpu, options.name || 'LLMLayerNorm');
+
+    const weightType = wgslScalarType(precision);
     const workgroupSize = options.workgroupSize || 64;
     const source = `
+      ${wgslEnableDirective(precision)}
       @group(0) @binding(0) var<storage, read> input: array<f32>;
-      @group(0) @binding(1) var<storage, read> weight: array<f32>;
-      @group(0) @binding(2) var<storage, read> bias: array<f32>;
+      @group(0) @binding(1) var<storage, read> weight: array<${weightType}>;
+      @group(0) @binding(2) var<storage, read> bias: array<${weightType}>;
       @group(0) @binding(3) var<storage, read_write> output: array<f32>;
 
       @compute @workgroup_size(${workgroupSize})
@@ -57,7 +73,7 @@ class NormalizeKernel {
         }
         variance = variance / f32(${hiddenSize}u);
 
-        let value = (input[index] - mean) * inverseSqrt(variance + ${this.epsilon}) * weight[index] + bias[index];
+        let value = (input[index] - mean) * inverseSqrt(variance + ${this.epsilon}) * f32(weight[index]) + f32(bias[index]);
         output[index] = value;
       }
     `;

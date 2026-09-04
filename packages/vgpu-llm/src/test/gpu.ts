@@ -20,6 +20,15 @@ export async function createGpu(skip: () => never): Promise<Gpu> {
   }
 }
 
+/** Same as `createGpu`, but requests the `shader-f16` feature for `fp16` kernel tests; `skip()`s if unavailable. */
+export async function createGpuWithF16(skip: () => never): Promise<Gpu> {
+  try {
+    return await init({ requiredFeatures: ['shader-f16'] });
+  } catch {
+    skip();
+  }
+}
+
 export async function readOutput(buffer: StorageBuffer): Promise<Float32Array> {
   return readFloat32(buffer);
 }

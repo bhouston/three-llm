@@ -36,10 +36,12 @@ class GatedMLPKernel {
     this.gate = new LinearKernel(gpu, inputBuffer, gateWeight, null, hiddenSize, innerSize, {
       name: options.name ? `${options.name}Gate` : 'LLMMLPGate',
       workgroupSize: options.workgroupSize,
+      precision: options.precision,
     });
     this.up = new LinearKernel(gpu, inputBuffer, upWeight, null, hiddenSize, innerSize, {
       name: options.name ? `${options.name}Up` : 'LLMMLPUp',
       workgroupSize: options.workgroupSize,
+      precision: options.precision,
     });
 
     if (options.activation === 'gelu_new' || options.activation === 'gelu_pytorch_tanh') {
@@ -63,6 +65,7 @@ class GatedMLPKernel {
     this.down = new LinearKernel(gpu, this.hidden.outputBuffer, downWeight, null, innerSize, hiddenSize, {
       name: options.name ? `${options.name}Down` : 'LLMMLPDown',
       workgroupSize: options.workgroupSize,
+      precision: options.precision,
     });
     this.outputBuffer = this.down.outputBuffer;
   }

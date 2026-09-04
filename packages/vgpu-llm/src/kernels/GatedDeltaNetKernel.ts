@@ -79,22 +79,31 @@ class GatedDeltaNetKernel {
 
     const name = options.name;
     const wg = this.workgroupSize;
+    // The dense qkv/z/b/a/out projections dominate this kernel's weight
+    // footprint, so they honor `precision`; the small per-head gate buffers
+    // below (conv/norm weights, aLog, dtBias) stay `fp32` — narrowing them
+    // would save negligible memory for real added risk in this kernel.
+    const precision = options.precision;
 
     this.qkv = new LinearKernel(gpu, inputBuffer, weights.qkvWeight, null, this.hiddenSize, this.convDim, {
       name: name ? `${name}QKV` : 'LLMDeltaQKV',
       workgroupSize: wg,
+      precision,
     });
     this.zProj = new LinearKernel(gpu, inputBuffer, weights.zWeight, null, this.hiddenSize, this.valueSize, {
       name: name ? `${name}Z` : 'LLMDeltaZ',
       workgroupSize: wg,
+      precision,
     });
     this.bProj = new LinearKernel(gpu, inputBuffer, weights.bWeight, null, this.hiddenSize, this.numVHeads, {
       name: name ? `${name}B` : 'LLMDeltaB',
       workgroupSize: wg,
+      precision,
     });
     this.aProj = new LinearKernel(gpu, inputBuffer, weights.aWeight, null, this.hiddenSize, this.numVHeads, {
       name: name ? `${name}A` : 'LLMDeltaA',
       workgroupSize: wg,
+      precision,
     });
 
     this.convStateBuffer = allocStorage(gpu, this.convDim * this.kernelSize);
@@ -115,6 +124,7 @@ class GatedDeltaNetKernel {
     this.outProj = new LinearKernel(gpu, this.mixedBuffer, weights.outWeight, null, this.valueSize, this.hiddenSize, {
       name: name ? `${name}Out` : 'LLMDeltaOut',
       workgroupSize: wg,
+      precision,
     });
     this.outputBuffer = this.outProj.outputBuffer;
 
