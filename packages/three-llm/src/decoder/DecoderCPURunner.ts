@@ -165,6 +165,7 @@ class DecoderCPURunner {
 			valueCache: cache.value,
 			ropeTheta: block.ropeTheta !== undefined ? block.ropeTheta : recipe.ropeTheta,
 			rotaryDim: recipe.rotaryDim || weights.headDim,
+			yarn: block.yarn,
 			slidingWindow: block.slidingWindow || 0,
 			attnScale: recipe.attnScale,
 			qNormWeight: block.qNormWeight,

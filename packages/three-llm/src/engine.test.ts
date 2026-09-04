@@ -9,6 +9,7 @@ import {
   prepareGenerationFromTokens,
   sharedPrefixLength,
 } from './runtime/generate.js';
+import { formatChatTemplate } from './runtime/chatTemplates.js';
 import { completionFollowUpText, formatCompletionPrompt, formatPrompt } from './runtime/conversation.js';
 import {
   applyRoPE,
@@ -22,6 +23,7 @@ import {
   silu,
   softmax,
   splitHeadGate,
+  yarnRotaryAngle,
 } from './runtime/math.js';
 import {
   bfloat16ToFloat32,
@@ -34,13 +36,21 @@ import {
   rewriteGoogleStorageURL,
   tensorToFloat32,
 } from './load/tensors.js';
-import { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG } from './catalog.js';
+import {
+  catalogLabel,
+  catalogWeightClass,
+  DEFAULT_MODEL_ID,
+  DESKTOP_RECOMMENDED_MODEL_ID,
+  isMobileCatalogModel,
+  MOBILE_RECOMMENDED_MODEL_ID,
+  MODEL_CATALOG,
+} from './catalog.js';
 import { QwenWeights } from './qwen/QwenWeights.js';
 import { QwenTSLRunner } from './qwen/QwenTSLRunner.js';
 import { loadSafetensorsModel, parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
 import { resolveTensor } from './load/TensorNameMap.js';
 import { UnigramTokenizer } from './load/UnigramTokenizer.js';
-import { closeArray, createTinyLlama, createTinyQwenWeights } from './test/helpers.js';
+import { closeArray, createTinyKanana, createTinyLlama, createTinyQwen2, createTinyQwenWeights } from './test/helpers.js';
 import type { TensorMap } from './types.js';
 
 function createSafeTensorsFixture(dtype: 'F32' | 'F16' = 'F32', values: number[] = [1, 2, 3, 4]) {
@@ -69,11 +79,12 @@ function createSafeTensorsFixture(dtype: 'F32' | 'F16' = 'F32', values: number[]
 }
 
 describe('MODEL_CATALOG', () => {
-  it('loads public Hugging Face checkpoints and skips Gemma', () => {
+  it('loads public Hugging Face checkpoints and large hosted test models', () => {
     const ids = MODEL_CATALOG.map((entry) => entry.id);
-    expect(ids).toEqual(['tinystories', 'gpt2', 'smollm2', 'qwen3.5-0.8b', 'phi-1.5']);
-    expect(ids.some((id) => id.includes('gemma'))).toBe(false);
+    expect(ids).toEqual(['tinystories', 'smollm2', 'qwen3.5-0.8b', 'gemma-3-1b-it']);
     expect(DEFAULT_MODEL_ID).toBe('smollm2');
+    expect(MOBILE_RECOMMENDED_MODEL_ID).toBe('smollm2');
+    expect(DESKTOP_RECOMMENDED_MODEL_ID).toBe('qwen3.5-0.8b');
     expect(ids).toContain(DEFAULT_MODEL_ID);
     for (const entry of MODEL_CATALOG) {
       expect(entry.url).toMatch(/^https:\/\/huggingface\.co\//);
@@ -81,9 +92,16 @@ describe('MODEL_CATALOG', () => {
       expect(entry.sizeHint).toMatch(/^\d+(\.\d+)? (MB|GB)$/);
       expect(catalogLabel(entry)).toContain(`[${entry.sizeHint}]`);
     }
+    expect(catalogWeightClass(MODEL_CATALOG.find((entry) => entry.id === 'tinystories')!)).toBe('small');
+    expect(catalogWeightClass(MODEL_CATALOG.find((entry) => entry.id === 'smollm2')!)).toBe('small');
+    expect(catalogWeightClass(MODEL_CATALOG.find((entry) => entry.id === 'qwen3.5-0.8b')!)).toBe('medium');
+    expect(catalogWeightClass(MODEL_CATALOG.find((entry) => entry.id === 'gemma-3-1b-it')!)).toBe('medium');
+    expect(MODEL_CATALOG.every((entry) => catalogWeightClass(entry) !== 'large')).toBe(true);
+    expect(isMobileCatalogModel(MODEL_CATALOG.find((entry) => entry.id === 'smollm2')!)).toBe(true);
+    expect(isMobileCatalogModel(MODEL_CATALOG.find((entry) => entry.id === 'qwen3.5-0.8b')!)).toBe(false);
     const qwen = MODEL_CATALOG.find((entry) => entry.id === 'qwen3.5-0.8b');
-    expect(qwen?.badge).toBe('Best Results');
-    expect(catalogLabel(qwen!)).toBe('Qwen3.5 0.8B (Best Results) [1.7 GB]');
+    expect(qwen?.badge).toBeUndefined();
+    expect(catalogLabel(qwen!)).toBe('Qwen3.5 0.8B [1.7 GB]');
   });
 });
 
@@ -444,6 +462,22 @@ describe('GPT2Tokenizer', () => {
     expect(tokenizer.encode('<|im_start|><think></think>')).toEqual([10, 11, 12]);
     expect(tokenizer.decode([10, 11, 12])).toBe('<|im_start|><think></think>');
   });
+
+  it('supports Qwen, SmolLM, and Llama-3 pre-tokenizer digit behavior', () => {
+    const vocab = {
+      '<|endoftext|>': 0,
+      '1': 1,
+      '2': 2,
+      '3': 3,
+      '12': 5,
+      '123': 4,
+    };
+    const qwen = new GPT2Tokenizer(vocab, [], { tokenPattern: /(?i:'s)|\p{N}/gu });
+    const llama3 = new GPT2Tokenizer(vocab, ['1 2', '12 3'], { tokenPattern: /\p{N}{1,3}/gu });
+
+    expect(qwen.encode('123')).toEqual([1, 2, 3]);
+    expect(llama3.encode('123')).toEqual([4]);
+  });
 });
 
 describe('math', () => {
@@ -509,6 +543,9 @@ describe('math', () => {
 
     const rope = applyRoPE(new Float32Array([1, 0, 0, 1]), 0, 4, 1, 10000);
     expect(Math.abs(rope[0]! - Math.cos(1))).toBeLessThan(1e-5);
+    expect(yarnRotaryAngle(4095, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 })).toBe(4095);
+    expect(yarnRotaryAngle(4096, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 })).toBe(512);
+    expect(yarnRotaryAngle(8192, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 })).toBe(1024);
 
     expect(architectureFor({ model_type: 'gpt2' })).toBe('gpt2');
     expect(architectureFor({ model_type: 'llama' })).toBe('llama');
@@ -678,6 +715,39 @@ describe('DecoderRecipe', () => {
       partial_rotary_factor: 0.5,
       sliding_window: 32,
     });
+    const qwen2 = recipeFor({
+      model_type: 'qwen2',
+      _name_or_path: 'Qwen/Qwen2.5-Coder-1.5B-Instruct',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 1,
+      num_attention_heads: 2,
+      vocab_size: 16,
+      use_sliding_window: false,
+      sliding_window: 32,
+    });
+    const qwen3 = recipeFor({
+      model_type: 'qwen3',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 1,
+      num_attention_heads: 2,
+      num_key_value_heads: 1,
+      head_dim: 4,
+      vocab_size: 16,
+    });
+    const kanana = recipeFor({
+      model_type: 'kanana2_tiny',
+      hidden_size: 8,
+      intermediate_size: 16,
+      num_hidden_layers: 4,
+      num_attention_heads: 2,
+      num_key_value_heads: 1,
+      head_dim: 4,
+      vocab_size: 16,
+      rope_scaling: { rope_type: 'yarn', factor: 8, original_max_position_embeddings: 4096 },
+      max_position_embeddings: 32768,
+    });
 
     expect(gpt2.position).toBe('learned');
     expect(gpt2.packedQKV).toBe(true);
@@ -689,6 +759,14 @@ describe('DecoderRecipe', () => {
     expect(qwen.layerTypes?.[3]).toBe('full_attention');
     expect(mistral.rotaryDim).toBe(2);
     expect(mistral.slidingWindow).toBe(32);
+    expect(qwen2.tokenizer).toBe('qwen');
+    expect(qwen2.slidingWindow).toBe(0);
+    expect(qwen2.chatTemplate).toBe('qwen2');
+    expect(qwen3.qkNorm).toBe(true);
+    expect(qwen3.chatTemplate).toBe('qwen3');
+    expect(kanana.tokenizer).toBe('llama3');
+    expect(kanana.layerTypes).toEqual(['sliding_attention', 'sliding_attention', 'sliding_attention', 'full_attention']);
+    expect(kanana.yarn?.factor).toBe(8);
     expect(() => architectureFor({ model_type: 'gemma2' })).toThrow(/Unsupported model_type "gemma2"/);
   });
 });
@@ -831,6 +909,32 @@ describe('UnigramTokenizer', () => {
     expect(tokenizer.decode([2, 9, 10])).toBe('hell');
   });
 
+  it('isolates added tokens before tokenizer.json BPE', () => {
+    const tokenizer = new UnigramTokenizer(
+      {
+        model: {
+          type: 'BPE',
+          byte_fallback: true,
+          unk_token: '<unk>',
+          vocab: {
+            '<unk>': 0,
+            '<eos>': 1,
+            '<bos>': 2,
+            '▁': 3,
+            h: 4,
+            i: 5,
+          },
+          merges: [],
+        },
+        added_tokens: [{ id: 10, content: '<start_of_turn>', special: true }],
+      },
+      { bos_token_id: 2, eos_token_id: [1, 10], add_bos_token: false },
+    );
+
+    expect(tokenizer.encode('<start_of_turn> hi')).toEqual([10, 3, 4, 5]);
+    expect(tokenizer.stopTokenIds).toEqual([1, 10]);
+  });
+
   it('round-trips metaspace text and prepends BOS', () => {
     const tokenizer = new UnigramTokenizer(
       {
@@ -877,6 +981,46 @@ describe('conversation prompt', () => {
     expect(formatPrompt(weights, [{ role: 'user', text: 'Hi' }])).toBe(
       '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n',
     );
+  });
+
+  it('formats shared instruct templates', () => {
+    expect(formatChatTemplate('qwen3', [{ role: 'user', text: 'Hi' }])).toBe(
+      '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n',
+    );
+    expect(formatChatTemplate('gemma3', [{ role: 'user', text: 'Hi' }])).toBe(
+      '<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n',
+    );
+    expect(formatChatTemplate('kanana', [{ role: 'user', text: 'Hi' }])).toBe(
+      '<|start_header_id|>user<|end_header_id|>\n\nHi<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n',
+    );
+  });
+});
+
+describe('DecoderWeights dense model support', () => {
+  it('packs optional Qwen2 QKV projection biases and stop tokens', () => {
+    const weights = createTinyQwen2();
+    const block = weights.block(0);
+
+    expect(weights.recipe.tokenizer).toBe('qwen');
+    expect(weights.recipe.slidingWindow).toBe(0);
+    expect(block.attnQKVBias?.length).toBe(weights.qSize + 2 * weights.kvSize);
+    expect(weights.stopTokenIds).toContain(0);
+    expect(weights.stopTokenIds).toContain(7);
+    expect(weights.formatChat?.([{ role: 'user', text: 'Hi' }])).toBe(
+      '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n',
+    );
+  });
+
+  it('uses Kanana per-layer sliding/full attention and QK norm', () => {
+    const weights = createTinyKanana();
+
+    expect(weights.contextLimit()).toBe(2048);
+    expect(weights.block(0).slidingWindow).toBe(1024);
+    expect(weights.block(0).yarn).toBeUndefined();
+    expect(weights.block(3).slidingWindow).toBe(0);
+    expect(weights.block(3).yarn?.factor).toBe(8);
+    expect(weights.block(3).qNormWeight).toBeDefined();
+    expect(weights.block(3).kNormWeight).toBeDefined();
   });
 });
 

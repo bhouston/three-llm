@@ -27,3 +27,5 @@ blob-report
 .pnpm-store
 # Temporary local checkpoints copied into the demo for offline testing
 packages/website/public/models/llm/**
+# Large Hugging Face checkpoints used for local model analysis
+models/llm/**

@@ -81,6 +81,59 @@ export function createTinyLlama() {
   );
 }
 
+export function createTinyQwen2() {
+  const hidden = 8;
+  const inner = 16;
+  const heads = 4;
+  const kvHeads = 2;
+  const headDim = 2;
+  const layers = 1;
+  const vocab = 8;
+  const qSize = heads * headDim;
+  const kvSize = kvHeads * headDim;
+  const tensors: TensorMap = {
+    'model.embed_tokens.weight': makeTensor('embed', [vocab, hidden], 0.11),
+    'model.norm.weight': makeTensor('norm', [hidden], 1.11),
+  };
+  const p = 'model.layers.0';
+  tensors[`${p}.input_layernorm.weight`] = makeTensor('ln1', [hidden], 2.11);
+  tensors[`${p}.post_attention_layernorm.weight`] = makeTensor('ln2', [hidden], 3.11);
+  tensors[`${p}.self_attn.q_proj.weight`] = makeTensor('q', [qSize, hidden], 4.11);
+  tensors[`${p}.self_attn.k_proj.weight`] = makeTensor('k', [kvSize, hidden], 5.11);
+  tensors[`${p}.self_attn.v_proj.weight`] = makeTensor('v', [kvSize, hidden], 6.11);
+  tensors[`${p}.self_attn.q_proj.bias`] = makeTensor('qb', [qSize], 4.21);
+  tensors[`${p}.self_attn.k_proj.bias`] = makeTensor('kb', [kvSize], 5.21);
+  tensors[`${p}.self_attn.v_proj.bias`] = makeTensor('vb', [kvSize], 6.21);
+  tensors[`${p}.self_attn.o_proj.weight`] = makeTensor('o', [hidden, qSize], 7.11);
+  tensors[`${p}.mlp.gate_proj.weight`] = makeTensor('gate', [inner, hidden], 8.11);
+  tensors[`${p}.mlp.up_proj.weight`] = makeTensor('up', [inner, hidden], 9.11);
+  tensors[`${p}.mlp.down_proj.weight`] = makeTensor('down', [hidden, inner], 10.11);
+
+  return new DecoderWeights(
+    {
+      model_type: 'qwen2',
+      _name_or_path: 'Qwen/Qwen2.5-Coder-1.5B-Instruct',
+      hidden_size: hidden,
+      intermediate_size: inner,
+      num_hidden_layers: layers,
+      num_attention_heads: heads,
+      num_key_value_heads: kvHeads,
+      head_dim: headDim,
+      vocab_size: vocab,
+      rms_norm_eps: 1e-6,
+      rope_theta: 1000000,
+      hidden_act: 'silu',
+      tie_word_embeddings: true,
+      eos_token_id: [0, 7],
+      max_position_embeddings: 16,
+      use_sliding_window: false,
+      sliding_window: 4,
+    },
+    tensors,
+    tinyTokenizer(),
+  );
+}
+
 export function createTinyPhi() {
   const hidden = 8;
   const inner = 8;
@@ -179,6 +232,60 @@ export function createTinyGemma() {
       query_pre_attn_scalar: headDim,
       eos_token_id: 0,
       max_position_embeddings: 16,
+    },
+    tensors,
+    tinyTokenizer(),
+  );
+}
+
+export function createTinyKanana() {
+  const hidden = 8;
+  const inner = 16;
+  const heads = 2;
+  const kvHeads = 1;
+  const headDim = 4;
+  const layers = 4;
+  const vocab = 8;
+  const qSize = heads * headDim;
+  const kvSize = kvHeads * headDim;
+  const tensors: TensorMap = {
+    'model.embed_tokens.weight': makeTensor('embed', [vocab, hidden], 0.16),
+    'model.norm.weight': makeTensor('norm', [hidden], 1.16),
+  };
+
+  for (let layer = 0; layer < layers; layer++) {
+    const p = `model.layers.${layer}`;
+    tensors[`${p}.input_layernorm.weight`] = makeTensor('ln1', [hidden], 2.16 + layer);
+    tensors[`${p}.post_attention_layernorm.weight`] = makeTensor('ln2', [hidden], 3.16 + layer);
+    tensors[`${p}.self_attn.q_norm.weight`] = makeTensor('qn', [headDim], 3.26 + layer);
+    tensors[`${p}.self_attn.k_norm.weight`] = makeTensor('kn', [headDim], 3.36 + layer);
+    tensors[`${p}.self_attn.q_proj.weight`] = makeTensor('q', [qSize, hidden], 4.16 + layer);
+    tensors[`${p}.self_attn.k_proj.weight`] = makeTensor('k', [kvSize, hidden], 5.16 + layer);
+    tensors[`${p}.self_attn.v_proj.weight`] = makeTensor('v', [kvSize, hidden], 6.16 + layer);
+    tensors[`${p}.self_attn.o_proj.weight`] = makeTensor('o', [hidden, qSize], 7.16 + layer);
+    tensors[`${p}.mlp.gate_proj.weight`] = makeTensor('gate', [inner, hidden], 8.16 + layer);
+    tensors[`${p}.mlp.up_proj.weight`] = makeTensor('up', [inner, hidden], 9.16 + layer);
+    tensors[`${p}.mlp.down_proj.weight`] = makeTensor('down', [hidden, inner], 10.16 + layer);
+  }
+
+  return new DecoderWeights(
+    {
+      model_type: 'kanana2_tiny',
+      _name_or_path: 'kakaocorp/kanana-2-1.3b-instruct',
+      hidden_size: hidden,
+      intermediate_size: inner,
+      num_hidden_layers: layers,
+      num_attention_heads: heads,
+      num_key_value_heads: kvHeads,
+      head_dim: headDim,
+      vocab_size: vocab,
+      rms_norm_eps: 1e-6,
+      rope_theta: 10000,
+      rope_scaling: { rope_type: 'yarn', factor: 8, original_max_position_embeddings: 4096 },
+      hidden_act: 'silu',
+      tie_word_embeddings: true,
+      eos_token_id: 0,
+      max_position_embeddings: 32768,
     },
     tensors,
     tinyTokenizer(),

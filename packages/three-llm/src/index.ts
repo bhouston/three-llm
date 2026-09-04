@@ -1,11 +1,26 @@
 export { completionFollowUpText, formatCompletionPrompt, formatPrompt } from './runtime/conversation.js';
+export { formatChatTemplate, stopTokenIdsFor } from './runtime/chatTemplates.js';
 export { DecoderCPURunner } from './decoder/DecoderCPURunner.js';
 export { architectureFor, recipeFor } from './load/DecoderRecipe.js';
 export { DecoderTSLRunner } from './decoder/DecoderTSLRunner.js';
 export { DecoderWeights } from './decoder/DecoderWeights.js';
 export { GPT2Tokenizer, GPT2_TOKEN_PATTERN, QWEN_TOKEN_PATTERN } from './load/GPT2Tokenizer.js';
 export { detectPrefix, loadHFModelBundle, normalizeRoot } from './load/HFModelBundle.js';
-export { catalogLabel, DEFAULT_MODEL_ID, MODEL_CATALOG, MODELS_BUCKET_URL, resolveModelURL } from './catalog.js';
+export {
+  catalogLabel,
+  catalogSizeBytes,
+  catalogWeightClass,
+  DEFAULT_MODEL_ID,
+  DESKTOP_RECOMMENDED_MODEL_ID,
+  isMobileCatalogModel,
+  MEDIUM_MODEL_MAX_BYTES,
+  MOBILE_MODEL_MAX_BYTES,
+  MOBILE_RECOMMENDED_MODEL_ID,
+  MODEL_CATALOG,
+  MODELS_BUCKET_URL,
+  resolveModelURL,
+} from './catalog.js';
+export type { CatalogWeightClass } from './catalog.js';
 export { createCPURunner, createTSLRunner, loadWeights } from './runtime/factory.js';
 export {
   generateAsync,
@@ -38,6 +53,7 @@ export {
   softmax,
   softplus,
   splitHeadGate,
+  yarnRotaryAngle,
 } from './runtime/math.js';
 export {
   bfloat16ToFloat32,
@@ -79,6 +95,7 @@ export { TSLSplitHeadGate } from './tsl/TSLSplitHeadGate.js';
 export { UnigramTokenizer } from './load/UnigramTokenizer.js';
 export type {
   Architecture,
+  ChatTemplateKind,
   ChatMessage,
   ChatRole,
   DecoderRecipe,
@@ -96,4 +113,5 @@ export type {
   Tensor,
   TensorMap,
   Tokenizer,
+  YarnRoPEConfig,
 } from './types.js';

@@ -2,6 +2,7 @@ import { detectPrefix, loadHFModelBundle } from '../load/HFModelBundle.js';
 import { packProjections, prepareGeneration, tensorToFloat32, transpose2D, unwrapTextConfig, createProgress, copyTensorRow, releaseBlockWeightArrays } from '../load/tensors.js';
 import { resolveTensor } from '../load/TensorNameMap.js';
 import { recipeFor } from '../load/DecoderRecipe.js';
+import { formatChatTemplate, stopTokenIdsFor } from '../runtime/chatTemplates.js';
 import type {
 	Architecture, ChatMessage, DecoderBlock, DecoderRecipe, FormatChatOptions, HFModelBundle,
 	HuggingFaceConfig, LoaderOptions, PreparedGeneration, ProgressCallback, Tensor, TensorMap, Tokenizer
@@ -85,17 +86,9 @@ class QwenWeights {
 		this.rotaryDim = this.recipe.rotaryDim;
 		this.attnScale = this.recipe.attnScale;
 		this.endOfTextTokenId = this.recipe.endOfTextTokenId ?? tokenizer.endOfTextTokenId ?? 248044;
-		this.stopTokenIds = [ this.endOfTextTokenId ];
+		this.stopTokenIds = stopTokenIdsFor( this.recipe.chatTemplate, tokenizer, this.recipe.stopTokenIds || [ this.endOfTextTokenId ] );
 		this._float32 = new Map();
 		this._tokenEmbed = null;
-
-		const imEndTokenId = tokenizer.encoder?.[ '<|im_end|>' ];
-
-		if ( imEndTokenId !== undefined && this.stopTokenIds.includes( imEndTokenId ) === false ) {
-
-			this.stopTokenIds.push( imEndTokenId );
-
-		}
 
 		this.logitWeight = null;
 		this.outputNormWeight = null;
@@ -119,29 +112,7 @@ class QwenWeights {
 
 	formatChat( messages: ChatMessage[], options: FormatChatOptions = {} ): string {
 
-		const enableThinking = options.enableThinking === true;
-		const addGenerationPrompt = options.addGenerationPrompt !== false;
-		let prompt = '';
-
-		for ( const message of messages ) {
-
-			const role = message.role;
-			const text = message.text ?? message.content ?? '';
-
-			if ( role !== 'system' && role !== 'user' && role !== 'assistant' ) continue;
-
-			prompt += `<|im_start|>${ role }\n${ text }<|im_end|>\n`;
-
-		}
-
-		if ( addGenerationPrompt ) {
-
-			prompt += '<|im_start|>assistant\n';
-			prompt += enableThinking ? '<think>\n' : '<think>\n\n</think>\n\n';
-
-		}
-
-		return prompt;
+		return formatChatTemplate( this.recipe.chatTemplate || 'qwen3_5', messages, options );
 
 	}
 

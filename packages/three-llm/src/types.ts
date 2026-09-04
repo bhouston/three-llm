@@ -11,7 +11,7 @@ export type Architecture = 'gpt2' | 'llama' | 'gemma3' | 'phi' | 'qwen3_5';
 
 export type GraphFamily = 'decoder' | 'qwen35';
 
-export type TokenizerKind = 'gpt2' | 'qwen' | 'unigram';
+export type TokenizerKind = 'gpt2' | 'qwen' | 'smollm' | 'llama3' | 'unigram';
 
 export type NormKind = 'layer_norm' | 'rms' | 'rms_offset';
 
@@ -33,6 +33,8 @@ export interface FormatChatOptions {
   enableThinking?: boolean;
   addGenerationPrompt?: boolean;
 }
+
+export type ChatTemplateKind = 'qwen2' | 'qwen3' | 'qwen3_5' | 'deepseek-r1' | 'gemma3' | 'smollm2' | 'kanana';
 
 export interface ModelCatalogEntry {
   id: string;
@@ -118,6 +120,7 @@ export interface Tokenizer {
   encode(text: string): number[];
   decode(tokenIds: number[]): string;
   endOfTextTokenId?: number;
+  stopTokenIds?: number[];
   bosTokenId?: number;
   eosTokenId?: number | number[];
   encoder?: Record<string, number>;
@@ -161,9 +164,19 @@ export interface HuggingFaceConfig {
     rope_theta?: number;
     partial_rotary_factor?: number;
   };
+  rope_scaling?: {
+    type?: string;
+    rope_type?: string;
+    factor?: number;
+    original_max_position_embeddings?: number;
+    beta_fast?: number;
+    beta_slow?: number;
+    attention_factor?: number;
+  };
   rope_local_base_freq?: number;
   query_pre_attn_scalar?: number;
   sliding_window?: number;
+  use_sliding_window?: boolean;
   layer_types?: string[];
   full_attention_interval?: number;
   linear_key_head_dim?: number;
@@ -216,6 +229,17 @@ export interface DecoderRecipe {
   linearConvKernel?: number;
   finalLogitSoftcap?: number;
   endOfTextTokenId: number;
+  stopTokenIds?: number[];
+  chatTemplate?: ChatTemplateKind;
+  yarn?: YarnRoPEConfig;
+}
+
+export interface YarnRoPEConfig {
+  factor: number;
+  originalContextLength: number;
+  betaFast: number;
+  betaSlow: number;
+  attentionFactor?: number;
 }
 
 export interface HFModelBundle {
@@ -239,6 +263,8 @@ export interface GPT2TokenizerOptions {
   endOfTextToken?: string;
   tokenPattern?: RegExp;
   addedTokens?: AddedToken[];
+  stopTokenIds?: number[];
+  normalizer?: 'nfc';
 }
 
 export interface KernelOptions {
@@ -253,6 +279,7 @@ export interface AttentionKernelOptions extends KernelOptions {
   rotaryDim?: number;
   ropeFreqDim?: number;
   ropePairCount?: number;
+  yarn?: YarnRoPEConfig;
   slidingWindow?: number;
   attnScale?: number;
   rmsEpsilon?: number;
@@ -279,6 +306,7 @@ export interface CausalAttentionOptions {
   valueCache: Float32Array;
   ropeTheta?: number;
   rotaryDim?: number;
+  yarn?: YarnRoPEConfig;
   slidingWindow?: number;
   attnScale?: number;
   qNormWeight?: Float32Array | null;
@@ -290,6 +318,7 @@ export interface CausalAttentionOptions {
 export interface DecoderBlock {
   layerType?: string;
   ropeTheta?: number;
+  yarn?: YarnRoPEConfig;
   slidingWindow?: number;
   lnWeight?: Float32Array;
   lnBias?: Float32Array | null;

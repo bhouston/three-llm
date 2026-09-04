@@ -30,6 +30,8 @@ class TSLAttention {
 	rotaryDim: number;
 	ropeFreqDim: number;
 	ropePairCount: number;
+	yarnFactor: number;
+	yarnOriginalContext: number;
 	slidingWindow: number;
 	attnScale: number;
 	rmsEpsilon: number;
@@ -74,6 +76,8 @@ class TSLAttention {
 		this.rotaryDim = options.rotaryDim !== undefined ? options.rotaryDim : this.headDim;
 		this.ropeFreqDim = options.ropeFreqDim || this.rotaryDim;
 		this.ropePairCount = options.ropePairCount !== undefined ? options.ropePairCount : ( this.rotaryDim / 2 );
+		this.yarnFactor = options.yarn?.factor || 1;
+		this.yarnOriginalContext = options.yarn?.originalContextLength || 0;
 		this.slidingWindow = options.slidingWindow || 0;
 		this.attnScale = options.attnScale !== undefined ? options.attnScale : ( 1 / Math.sqrt( this.headDim ) );
 		this.rmsEpsilon = options.rmsEpsilon || 1e-6;
@@ -143,7 +147,7 @@ class TSLAttention {
 
 	headValue( vectorNode: TslNode, headOffset: TslNode, localDim: TslNode, positionNode: TslNode, normNode: TslNode | null ) {
 
-		const { headDim, rotaryDim, ropeTheta, rmsEpsilon, offsetRMSNorm, ropeFreqDim, ropePairCount } = this;
+		const { headDim, rotaryDim, ropeTheta, rmsEpsilon, offsetRMSNorm, ropeFreqDim, ropePairCount, yarnFactor, yarnOriginalContext } = this;
 		const xRaw = vectorNode.element( headOffset.add( localDim ) );
 
 		if ( ! normNode && ropeTheta <= 0 ) return xRaw;
@@ -175,8 +179,11 @@ class TSLAttention {
 			partnerRaw.mul( invRms ).mul( partnerScale ).negate(),
 			partnerRaw.mul( invRms ).mul( partnerScale )
 		);
+		const effectivePosition = yarnFactor > 1 && yarnOriginalContext > 0
+			? positionNode.lessThan( uint( yarnOriginalContext ) ).select( float( positionNode ), float( positionNode ).div( yarnFactor ) )
+			: float( positionNode );
 		const angle = freqIndex.lessThan( uint( ropePairCount ) ).select(
-			float( positionNode ).mul( pow( float( ropeTheta ), float( freqIndex ).mul( float( - 2 / ropeFreqDim ) ) ) ),
+			effectivePosition.mul( pow( float( ropeTheta ), float( freqIndex ).mul( float( - 2 / ropeFreqDim ) ) ) ),
 			float( 0 )
 		);
 		const rotated = x.mul( cos( angle ) ).add( partner.mul( sin( angle ) ) );
@@ -187,7 +194,7 @@ class TSLAttention {
 
 	ropeValue( vectorNode: TslNode, headOffset: TslNode, localDim: TslNode, positionNode: TslNode ) {
 
-		const { rotaryDim, ropeTheta, qkvNode, ropeFreqDim, ropePairCount } = this;
+		const { rotaryDim, ropeTheta, qkvNode, ropeFreqDim, ropePairCount, yarnFactor, yarnOriginalContext } = this;
 
 		if ( ropeTheta <= 0 || rotaryDim <= 0 ) {
 
@@ -207,8 +214,11 @@ class TSLAttention {
 			qkvNode.element( partnerIndex ).negate(),
 			qkvNode.element( partnerIndex )
 		);
+		const effectivePosition = yarnFactor > 1 && yarnOriginalContext > 0
+			? positionNode.lessThan( uint( yarnOriginalContext ) ).select( float( positionNode ), float( positionNode ).div( yarnFactor ) )
+			: float( positionNode );
 		const angle = freqIndex.lessThan( uint( ropePairCount ) ).select(
-			float( positionNode ).mul( pow( float( ropeTheta ), float( freqIndex ).mul( float( - 2 / ropeFreqDim ) ) ) ),
+			effectivePosition.mul( pow( float( ropeTheta ), float( freqIndex ).mul( float( - 2 / ropeFreqDim ) ) ) ),
 			float( 0 )
 		);
 		const rotated = x.mul( cos( angle ) ).add( partner.mul( sin( angle ) ) );

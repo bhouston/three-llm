@@ -2,8 +2,9 @@ import { architectureFor, recipeFor } from '../load/DecoderRecipe.js';
 import { detectPrefix, loadHFModelBundle } from '../load/HFModelBundle.js';
 import { copyTensorRow, createProgress, packBiases, packProjections, prepareGeneration, releaseBlockWeightArrays, tensorToFloat32, transpose2D, unwrapTextConfig } from '../load/tensors.js';
 import { hasMappedTensor, resolveTensor } from '../load/TensorNameMap.js';
+import { formatChatTemplate, stopTokenIdsFor } from '../runtime/chatTemplates.js';
 import type {
-	Architecture, DecoderBlock, DecoderRecipe, HFModelBundle, HuggingFaceConfig, LoaderOptions,
+	Architecture, ChatMessage, DecoderBlock, DecoderRecipe, FormatChatOptions, HFModelBundle, HuggingFaceConfig, LoaderOptions,
 	PreparedGeneration, ProgressCallback, Tensor, TensorMap, Tokenizer
 } from '../types.js';
 
@@ -43,6 +44,8 @@ class DecoderWeights {
 	slidingWindow: number;
 	layerTypes?: string[];
 	endOfTextTokenId: number;
+	stopTokenIds: number[];
+	formatChat?: ( messages: ChatMessage[], options?: FormatChatOptions ) => string;
 	_float32: Map<string, Float32Array>;
 	_tokenEmbed: Tensor | null;
 	_posEmbed: Tensor | null;
@@ -90,6 +93,12 @@ class DecoderWeights {
 		}
 
 		this.endOfTextTokenId = endOfTextTokenId;
+		this.stopTokenIds = stopTokenIdsFor( this.recipe.chatTemplate, tokenizer, this.recipe.stopTokenIds || [ endOfTextTokenId ] );
+		if ( this.recipe.chatTemplate !== undefined ) {
+
+			this.formatChat = ( messages, formatOptions = {} ) => formatChatTemplate( this.recipe.chatTemplate!, messages, formatOptions );
+
+		}
 
 		this._float32 = new Map();
 		this._tokenEmbed = null;
@@ -320,20 +329,27 @@ class DecoderWeights {
 		const k = this.linearMapped( 'attn_k', index, kvSize, hiddenSize );
 		const v = this.linearMapped( 'attn_v', index, kvSize, hiddenSize );
 		const layerType = ( this.layerTypes && this.layerTypes[ index ] ) || 'full_attention';
-		const ropeTheta = architecture === 'gemma3'
-			? ( layerType === 'full_attention' ? this.globalRopeTheta : this.localRopeTheta )
-			: this.ropeTheta;
-		const slidingWindow = architecture === 'gemma3'
-			? ( layerType === 'sliding_attention' ? this.slidingWindow : 0 )
-			: ( recipe.slidingWindow || 0 );
+		const isSlidingLayer = layerType === 'sliding_attention';
+		const ropeTheta = isSlidingLayer
+			? ( this.localRopeTheta || this.ropeTheta )
+			: ( this.globalRopeTheta || this.ropeTheta );
+		const slidingWindow = isSlidingLayer ? this.slidingWindow : ( this.layerTypes ? 0 : ( recipe.slidingWindow || 0 ) );
+		const qkvBias = this.hasMapped( 'attn_q_bias', index ) || this.hasMapped( 'attn_k_bias', index ) || this.hasMapped( 'attn_v_bias', index )
+			? packBiases( [
+				this.optionalBias( 'attn_q_bias', index, qSize ),
+				this.optionalBias( 'attn_k_bias', index, kvSize ),
+				this.optionalBias( 'attn_v_bias', index, kvSize )
+			] )
+			: null;
 
 		const block: DecoderBlock = {
 			layerType,
 			ropeTheta,
+			yarn: recipe.yarn && isSlidingLayer === false ? recipe.yarn : undefined,
 			slidingWindow,
 			ln1Weight: this.mappedFloat( 'attn_norm', index ),
 			attnQKVWeight: packProjections( [ q, k, v ], hiddenSize ),
-			attnQKVBias: null,
+			attnQKVBias: qkvBias,
 			attnProjWeight: this.linearMapped( 'attn_out', index, hiddenSize, qSize ),
 			attnProjBias: null,
 			mlpGateWeight: this.linearMapped( 'ffn_gate', index, innerSize, hiddenSize ),

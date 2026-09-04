@@ -52,6 +52,9 @@ class UnigramTokenizer implements Tokenizer {
   eosTokenId?: number | number[];
   addBos: boolean;
   endOfTextTokenId?: number;
+  stopTokenIds?: number[];
+  addedTokenIds: Map<string, number>;
+  addedTokenPattern: RegExp | null;
   trie: TrieNode;
   unkId: number;
 
@@ -70,7 +73,10 @@ class UnigramTokenizer implements Tokenizer {
     this.bosTokenId = tokenizerConfig.bos_token_id ?? tokenizerJSON.post_processor?.bos_token_id;
     this.eosTokenId = tokenizerConfig.eos_token_id;
     this.addBos = tokenizerConfig.add_bos_token !== false;
-    this.endOfTextTokenId = (this.eosTokenId ?? 1) as number;
+    this.endOfTextTokenId = Array.isArray(this.eosTokenId) ? this.eosTokenId[0] : ((this.eosTokenId ?? 1) as number);
+    this.stopTokenIds = Array.isArray(this.eosTokenId) ? this.eosTokenId.slice() : undefined;
+    this.addedTokenIds = new Map();
+    this.addedTokenPattern = null;
     this.trie = { children: new Map(), id: -1 };
 
     if (this.useBpe) {
@@ -110,15 +116,25 @@ class UnigramTokenizer implements Tokenizer {
       this.tokens[addedToken.id] = addedToken.content;
       if (this.scores[addedToken.id] === undefined) this.scores[addedToken.id] = 0;
       this.tokenToId.set(addedToken.content, addedToken.id);
+      this.addedTokenIds.set(addedToken.content, addedToken.id);
       if (this.useBpe === false) insertTrie(this.trie, addedToken.content, addedToken.id);
 
-      if (addedToken.special && addedToken.content.includes('bos')) this.bosTokenId = addedToken.id;
-      if (addedToken.special && addedToken.content.includes('eos')) this.eosTokenId = addedToken.id;
+      if (this.bosTokenId === undefined && addedToken.special && addedToken.content.includes('bos')) this.bosTokenId = addedToken.id;
+      if (this.eosTokenId === undefined && addedToken.special && addedToken.content.includes('eos')) this.eosTokenId = addedToken.id;
+    }
+
+    if (this.addedTokenIds.size > 0) {
+      const escaped = Array.from(this.addedTokenIds.keys())
+        .toSorted((a, b) => b.length - a.length)
+        .map(escapeRegExp)
+        .join('|');
+      this.addedTokenPattern = new RegExp(`(${escaped})`);
     }
 
     if (this.bosTokenId === undefined) this.bosTokenId = this.tokenToId.get('<bos>') ?? 2;
     if (this.eosTokenId === undefined) this.eosTokenId = this.tokenToId.get('<eos>') ?? 1;
-    this.endOfTextTokenId = this.eosTokenId as number;
+    this.endOfTextTokenId = Array.isArray(this.eosTokenId) ? this.eosTokenId[0] : this.eosTokenId;
+    this.stopTokenIds = Array.isArray(this.eosTokenId) ? this.eosTokenId.slice() : [this.endOfTextTokenId];
   }
 
   static async fromURL(baseURL: string, options: UnigramLoadOptions = {}): Promise<UnigramTokenizer> {
@@ -152,9 +168,23 @@ class UnigramTokenizer implements Tokenizer {
 
   encode(text: string): number[] {
     const source = String(text);
-    const ids = this.useBpe
-      ? this.encodeBpe(source.replaceAll(' ', this.replacement))
-      : this.unigram(`${this.replacement}${source.replaceAll(' ', this.replacement)}`);
+    const ids: number[] = [];
+    const chunks = this.addedTokenPattern === null ? [source] : source.split(this.addedTokenPattern);
+
+    for (const chunk of chunks) {
+      if (chunk === '') continue;
+
+      if (this.addedTokenIds.has(chunk)) {
+        ids.push(this.addedTokenIds.get(chunk)!);
+        continue;
+      }
+
+      ids.push(
+        ...(this.useBpe
+          ? this.encodeBpe(chunk.replaceAll(' ', this.replacement))
+          : this.unigram(`${this.replacement}${chunk.replaceAll(' ', this.replacement)}`)),
+      );
+    }
 
     if (this.addBos) ids.unshift(this.bosTokenId!);
 
@@ -163,9 +193,10 @@ class UnigramTokenizer implements Tokenizer {
 
   decode(tokenIds: number[]): string {
     let text = '';
+    const eosIds = new Set(Array.isArray(this.eosTokenId) ? this.eosTokenId : [this.eosTokenId]);
 
     for (const id of tokenIds) {
-      if (id === this.bosTokenId || id === this.eosTokenId) continue;
+      if (id === this.bosTokenId || eosIds.has(id)) continue;
 
       const token = this.tokens[id];
       if (token === undefined) continue;
@@ -353,6 +384,10 @@ function getPairs(word: string[]): Set<string> {
   }
 
   return pairs;
+}
+
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export { UnigramTokenizer };

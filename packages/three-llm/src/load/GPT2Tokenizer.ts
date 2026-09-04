@@ -14,9 +14,11 @@ class GPT2Tokenizer implements Tokenizer {
   unknownToken: string;
   endOfTextToken: string;
   tokenPattern: RegExp;
+  normalizer?: 'nfc';
   addedTokenIds: Map<string, number>;
   addedTokenPattern: RegExp | null;
   endOfTextTokenId?: number;
+  stopTokenIds?: number[];
   bpeRanks: Map<string, number>;
 
   constructor(vocab: Record<string, number>, merges: string[], options: GPT2TokenizerOptions = {}) {
@@ -28,6 +30,7 @@ class GPT2Tokenizer implements Tokenizer {
     this.unknownToken = options.unknownToken || '<|endoftext|>';
     this.endOfTextToken = options.endOfTextToken || '<|endoftext|>';
     this.tokenPattern = options.tokenPattern || GPT2_TOKEN_PATTERN;
+    this.normalizer = options.normalizer;
     this.addedTokenIds = new Map();
     this.addedTokenPattern = null;
 
@@ -42,13 +45,14 @@ class GPT2Tokenizer implements Tokenizer {
 
     if (this.addedTokenIds.size > 0) {
       const escaped = Array.from(this.addedTokenIds.keys())
-        .sort((a, b) => b.length - a.length)
+        .toSorted((a, b) => b.length - a.length)
         .map(escapeRegExp)
         .join('|');
       this.addedTokenPattern = new RegExp(`(${escaped})`);
     }
 
     this.endOfTextTokenId = this.encoder[this.endOfTextToken];
+    this.stopTokenIds = options.stopTokenIds?.slice();
 
     for (const token in this.encoder) {
       this.decoder[this.encoder[token]] = token;
@@ -79,9 +83,36 @@ class GPT2Tokenizer implements Tokenizer {
     return new GPT2Tokenizer(vocab, merges.split(/\r?\n/), options);
   }
 
+  static async fromTokenizerJSONURL(tokenizerURL: string, options?: GPT2TokenizerOptions): Promise<GPT2Tokenizer> {
+    const tokenizerJSON = await fetchJSON<{
+      model?: { vocab?: Record<string, number>; merges?: Array<string | [string, string]>; unk_token?: string };
+      normalizer?: { type?: string } | { normalizers?: Array<{ type?: string }> };
+      added_tokens?: AddedToken[];
+    }>(tokenizerURL, 'GPT2Tokenizer');
+    const model = tokenizerJSON.model || {};
+
+    if (model.vocab === undefined || model.merges === undefined) {
+      throw new Error('GPT2Tokenizer: tokenizer.json does not contain a BPE vocab and merges.');
+    }
+
+    const merges = model.merges.map((merge) => (Array.isArray(merge) ? merge.join(' ') : merge));
+    const normalizers = 'normalizers' in (tokenizerJSON.normalizer || {})
+      ? (tokenizerJSON.normalizer as { normalizers?: Array<{ type?: string }> }).normalizers || []
+      : [tokenizerJSON.normalizer as { type?: string } | undefined];
+    const hasNfc = normalizers.some((normalizer) => normalizer?.type === 'NFC');
+
+    return new GPT2Tokenizer(model.vocab, merges, {
+      unknownToken: model.unk_token || options?.unknownToken,
+      ...options,
+      normalizer: options?.normalizer ?? (hasNfc ? 'nfc' : undefined),
+      addedTokens: [...(tokenizerJSON.added_tokens || []), ...(options?.addedTokens || [])],
+    });
+  }
+
   encode(text: string): number[] {
     const tokens: number[] = [];
-    const chunks = this.addedTokenPattern === null ? [text] : String(text).split(this.addedTokenPattern);
+    const source = this.normalizer === 'nfc' ? String(text).normalize('NFC') : String(text);
+    const chunks = this.addedTokenPattern === null ? [source] : source.split(this.addedTokenPattern);
 
     for (const chunk of chunks) {
       if (chunk === '') continue;
@@ -178,6 +209,10 @@ class GPT2Tokenizer implements Tokenizer {
 const GPT2_TOKEN_PATTERN = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
 const QWEN_TOKEN_PATTERN =
   /(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+/gu;
+const SMOLLM_TOKEN_PATTERN =
+  /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
+const LLAMA3_TOKEN_PATTERN =
+  /(?i:'s|'t|'re|'ve|'m|'ll|'d)| ?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+/gu;
 
 function bytesToUnicode(): Record<number, string> {
   const bs: number[] = [];
@@ -233,4 +268,4 @@ function getPairs(word: string[]): Set<string> {
   return pairs;
 }
 
-export { GPT2Tokenizer, GPT2_TOKEN_PATTERN, QWEN_TOKEN_PATTERN };
+export { GPT2Tokenizer, GPT2_TOKEN_PATTERN, LLAMA3_TOKEN_PATTERN, QWEN_TOKEN_PATTERN, SMOLLM_TOKEN_PATTERN };

@@ -119,6 +119,7 @@ function rotaryAngle( position: number, freqIndex: number, rotaryDim: number, th
 interface RopeOptions {
 	ropeFreqDim?: number;
 	ropePairCount?: number;
+	yarn?: CausalAttentionOptions[ 'yarn' ];
 }
 
 function applyRoPE( vector: FloatVec, headOffset: number, rotaryDim: number, position: number, theta: number, options: RopeOptions = {} ): FloatVec {
@@ -143,7 +144,7 @@ function applyRoPE( vector: FloatVec, headOffset: number, rotaryDim: number, pos
 		}
 
 		const partner = i < half ? - vector[ headOffset + i + half ] : vector[ headOffset + i - half ];
-		const angle = rotaryAngle( position, freqIndex, freqDim, theta );
+		const angle = yarnRotaryAngle( position, freqIndex, freqDim, theta, options.yarn );
 
 		rotated[ i ] = x * Math.cos( angle ) + partner * Math.sin( angle );
 
@@ -196,6 +197,7 @@ function causalAttention( qkv: FloatVec, options: AttentionOptions ): FloatVec {
 		offsetRMSNorm = false,
 		ropeFreqDim = rotaryDim,
 		ropePairCount,
+		yarn,
 		queryOnly = false,
 		writeCache = true,
 		vNorm = false,
@@ -206,7 +208,7 @@ function causalAttention( qkv: FloatVec, options: AttentionOptions ): FloatVec {
 	const query = qkv.slice( 0, qSize );
 	const key = queryOnly ? null : qkv.slice( qSize, qSize + kvSize );
 	const firstToken = slidingWindow > 0 ? Math.max( 0, position - slidingWindow + 1 ) : 0;
-	const ropeOptions = { ropeFreqDim, ropePairCount };
+	const ropeOptions = { ropeFreqDim, ropePairCount, yarn };
 
 	if ( qNormWeight !== null ) rmsNormPackedHeads( query, headCount, headDim, qNormWeight, rmsEpsilon, offsetRMSNorm );
 
@@ -305,6 +307,14 @@ function causalAttention( qkv: FloatVec, options: AttentionOptions ): FloatVec {
 function sigmoid( x: number ): number {
 
 	return 1 / ( 1 + Math.exp( - x ) );
+
+}
+
+function yarnRotaryAngle( position: number, freqIndex: number, rotaryDim: number, theta: number, yarn?: CausalAttentionOptions[ 'yarn' ] ): number {
+
+	if ( yarn === undefined || position < yarn.originalContextLength ) return rotaryAngle( position, freqIndex, rotaryDim, theta );
+
+	return rotaryAngle( position / yarn.factor, freqIndex, rotaryDim, theta );
 
 }
 
@@ -698,5 +708,6 @@ export {
 	silu,
 	softplus,
 	softmax,
-	splitHeadGate
+	splitHeadGate,
+	yarnRotaryAngle
 };

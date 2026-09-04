@@ -1,6 +1,14 @@
 import { completionFollowUpText, formatPrompt } from 'three-llm';
-import { DEFAULT_MODEL_ID, MODEL_CATALOG, resolveModelURL } from 'three-llm/catalog';
-import type { ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry } from 'three-llm';
+import {
+  catalogWeightClass,
+  DEFAULT_MODEL_ID,
+  DESKTOP_RECOMMENDED_MODEL_ID,
+  isMobileCatalogModel,
+  MOBILE_RECOMMENDED_MODEL_ID,
+  MODEL_CATALOG,
+  resolveModelURL,
+} from 'three-llm/catalog';
+import type { CatalogWeightClass, ChatMessage, GenerateOptions, GenerationResult, ModelCatalogEntry } from 'three-llm';
 import { ArrowUpIcon, MessageSquareIcon, SettingsIcon, SquareIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -46,12 +54,31 @@ const DEFAULT_MAX_NEW_TOKENS = 1024;
 const MOBILE_MAX_TOKENS = 1024;
 const DRAFT_FLUSH_MS = 1000;
 
+function isMobileDevice() {
+  if (typeof navigator === 'undefined') return false;
+  const nav = navigator as Navigator & { userAgentData?: { mobile?: boolean } };
+  if (nav.userAgentData?.mobile === true) return true;
+  return /Mobi|Android|iPhone|iPad/i.test(nav.userAgent);
+}
+
 function isConstrainedDevice() {
   if (typeof navigator === 'undefined') return false;
-  const nav = navigator as Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } };
-  if (nav.userAgentData?.mobile === true) return true;
-  if (nav.deviceMemory !== undefined && nav.deviceMemory <= 4) return true;
-  return /Mobi|Android|iPhone|iPad/i.test(nav.userAgent);
+  if (isMobileDevice()) return true;
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  return nav.deviceMemory !== undefined && nav.deviceMemory <= 4;
+}
+
+const WEIGHT_TEXT_CLASS: Record<CatalogWeightClass, string> = {
+  small: 'text-lime-500 dark:text-lime-400',
+  medium: 'text-orange-500 dark:text-orange-400',
+  large: 'text-red-500 dark:text-red-400',
+};
+
+function modelListBadge(entry: ModelCatalogEntry, mobile: boolean): string | undefined {
+  if (mobile && !isMobileCatalogModel(entry)) return 'Desktop Only';
+  if (mobile && entry.id === MOBILE_RECOMMENDED_MODEL_ID) return 'Recommended';
+  if (!mobile && entry.id === DESKTOP_RECOMMENDED_MODEL_ID) return 'Recommended';
+  return undefined;
 }
 
 function ChatBubble({ turn, streaming = false }: { turn: ChatTurn; streaming?: boolean }) {
@@ -72,12 +99,16 @@ function ChatBubble({ turn, streaming = false }: { turn: ChatTurn; streaming?: b
   );
 }
 
-function selectedModel(modelId: string | undefined): ModelCatalogEntry {
-  return (
+function selectedModel(modelId: string | undefined, mobile: boolean): ModelCatalogEntry {
+  const fallbackId = mobile ? MOBILE_RECOMMENDED_MODEL_ID : DEFAULT_MODEL_ID;
+  const requested =
     MODEL_CATALOG.find((entry) => entry.id === modelId) ??
-    MODEL_CATALOG.find((entry) => entry.id === DEFAULT_MODEL_ID) ??
-    MODEL_CATALOG[0]!
-  );
+    MODEL_CATALOG.find((entry) => entry.id === fallbackId) ??
+    MODEL_CATALOG[0]!;
+  if (mobile && !isMobileCatalogModel(requested)) {
+    return MODEL_CATALOG.find((entry) => entry.id === MOBILE_RECOMMENDED_MODEL_ID) ?? requested;
+  }
+  return requested;
 }
 
 function defaultMaxNewTokens(contextLimit: number): number {
@@ -90,7 +121,8 @@ function conversationPrompt(runner: TslRunner, turns: ChatTurn[], enableThinking
 
 export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelChange: (id: string) => void }) {
   const ga = useGoogleAnalytics();
-  const model = useMemo(() => selectedModel(modelId), [modelId]);
+  const mobile = isMobileDevice();
+  const model = useMemo(() => selectedModel(modelId, mobile), [mobile, modelId]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const runnerRef = useRef<TslRunner | undefined>(undefined);
@@ -118,7 +150,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   const [enableThinking, setEnableThinking] = useState(false);
   const [architecture, setArchitecture] = useState<string | null>(null);
 
-  const isQwen = (architecture ?? model.id).includes('qwen');
+  const supportsThinking = /qwen|deepseek/i.test(`${architecture ?? ''} ${model.id} ${model.name}`);
   const busy = !ready || generating;
   const canClear = ready && (history.length > 0 || assistantDraft !== '');
 
@@ -164,6 +196,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   useEffect(() => {
     scrollToBottom();
   }, [history, assistantDraft, scrollToBottom]);
+
+  useEffect(() => {
+    if (modelId !== undefined && modelId !== model.id) onModelChange(model.id);
+  }, [model.id, modelId, onModelChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -275,9 +311,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   function changeModel(nextId: string) {
     if (nextId === model.id) return;
     const nextModel = MODEL_CATALOG.find((entry) => entry.id === nextId);
-    if (nextModel) {
-      ga.event('model-change', { model_name: nextModel.name });
-    }
+    if (!nextModel || (mobile && !isMobileCatalogModel(nextModel))) return;
+    ga.event('model-change', { model_name: nextModel.name });
     onModelChange(nextId);
   }
 
@@ -492,19 +527,33 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                     disabled={generating}
                   >
                     <SelectTrigger size="sm" type="button" aria-label="Model">
-                      <SelectValue>{model.name}</SelectValue>
+                      <SelectValue>
+                        <span className={WEIGHT_TEXT_CLASS[catalogWeightClass(model)]}>{model.name}</span>
+                      </SelectValue>
                     </SelectTrigger>
-                    <SelectContent side="top" align="end" alignItemWithTrigger={false} className="min-w-64">
+                    <SelectContent side="top" align="end" alignItemWithTrigger={false} className="min-w-80">
                       <SelectGroup>
-                        {MODEL_CATALOG.map((entry) => (
-                          <SelectItem key={entry.id} value={entry.id}>
-                            <span className="flex items-center gap-2">
-                              {entry.name}
-                              <span className="text-muted-foreground">{entry.sizeHint}</span>
-                              {entry.badge ? <Badge variant="secondary">{entry.badge}</Badge> : null}
-                            </span>
-                          </SelectItem>
-                        ))}
+                        {MODEL_CATALOG.map((entry) => {
+                          const weightClass = catalogWeightClass(entry);
+                          const desktopOnly = mobile && !isMobileCatalogModel(entry);
+                          const badge = modelListBadge(entry, mobile);
+                          return (
+                            <SelectItem
+                              key={entry.id}
+                              value={entry.id}
+                              disabled={desktopOnly}
+                              className={`${WEIGHT_TEXT_CLASS[weightClass]} focus:text-current focus:**:text-inherit`}
+                            >
+                              <span className="flex items-center gap-2">
+                                <span className={WEIGHT_TEXT_CLASS[weightClass]}>{entry.name}</span>
+                                <span className="text-muted-foreground">{entry.sizeHint}</span>
+                                {badge ? (
+                                  <Badge variant={desktopOnly ? 'outline' : 'secondary'}>{badge}</Badge>
+                                ) : null}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </SelectGroup>
                     </SelectContent>
                   </Select>
@@ -589,7 +638,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                             onChange={(event) => setNoRepeatNgramSize(Number(event.target.value) || 0)}
                           />
                         </Field>
-                        {isQwen ? (
+                        {supportsThinking ? (
                           <Field orientation="horizontal">
                             <FieldLabel htmlFor="thinking">Thinking</FieldLabel>
                             <Switch
@@ -598,7 +647,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                               onCheckedChange={(checked) => setEnableThinking(checked === true)}
                             />
                             <FieldDescription>
-                              Off injects a closed think block so Qwen answers directly.
+                              Off injects a closed think block so thinking models answer directly.
                             </FieldDescription>
                           </Field>
                         ) : null}

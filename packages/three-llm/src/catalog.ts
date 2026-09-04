@@ -4,6 +4,12 @@ import type { ModelCatalogEntry } from './types.js';
 export const MODELS_BUCKET_URL = 'https://storage.googleapis.com/three-llm';
 
 export const DEFAULT_MODEL_ID = 'smollm2';
+export const DESKTOP_RECOMMENDED_MODEL_ID = 'qwen3.5-0.8b';
+export const MOBILE_RECOMMENDED_MODEL_ID = 'smollm2';
+export const MOBILE_MODEL_MAX_BYTES = 500_000_000;
+export const MEDIUM_MODEL_MAX_BYTES = 2_000_000_000;
+
+export type CatalogWeightClass = 'small' | 'medium' | 'large';
 
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
   {
@@ -14,15 +20,6 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     prompt: 'Once upon a time,',
     note: "Children's stories. Dense GPT-2 at ~3.7M parameters, a few megabytes from Hugging Face.",
     sizeHint: '15 MB',
-  },
-  {
-    id: 'gpt2',
-    name: 'GPT-2 124M',
-    url: 'https://huggingface.co/openai-community/gpt2/resolve/main/',
-    localUrl: '/api/models/gpt2/',
-    prompt: 'Once upon a time,',
-    note: 'Classic dense GPT-2. About 500 MB of float32 weights from Hugging Face.',
-    sizeHint: '548 MB',
   },
   {
     id: 'smollm2',
@@ -41,18 +38,35 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     prompt: 'Once upon a time,',
     note: 'Qwen3.5 0.8B hybrid: Gated DeltaNet linear attention plus gated full attention. About 1.8 GB BF16. Text-only decode; vision tensors are skipped. Thinking is off by default so replies skip the <think> block.',
     sizeHint: '1.7 GB',
-    badge: 'Best Results',
   },
   {
-    id: 'phi-1.5',
-    name: 'Phi-1.5 1.3B',
-    url: 'https://huggingface.co/microsoft/phi-1_5/resolve/main/',
-    localUrl: '/api/models/phi-1.5/',
-    prompt: 'Once upon a time,',
-    note: 'Microsoft Phi-1.5 (LayerNorm, partial RoPE, parallel attention + MLP). About 2.8 GB FP16 from Hugging Face.',
-    sizeHint: '2.8 GB',
+    id: 'gemma-3-1b-it',
+    name: 'Gemma 3 1B IT',
+    url: 'https://huggingface.co/google/gemma-3-1b-it/resolve/main/',
+    localUrl: '/api/models/gemma-3-1b-it/',
+    prompt: 'Write a short friendly introduction to WebGPU.',
+    note: 'Gemma 3 instruction-tuned text decoder with alternating local and full attention. About 1.9 GB BF16. Text-only inference; multimodal inputs are not supported.',
+    sizeHint: '1.9 GB',
   },
 ];
+
+export function catalogSizeBytes(sizeHint: string): number {
+  const match = /^(\d+(?:\.\d+)?) (MB|GB)$/.exec(sizeHint);
+  if (!match) throw new Error(`Invalid catalog size hint: ${sizeHint}`);
+  const value = Number(match[1]);
+  return match[2] === 'GB' ? value * 1_000_000_000 : value * 1_000_000;
+}
+
+export function catalogWeightClass(entry: ModelCatalogEntry): CatalogWeightClass {
+  const bytes = catalogSizeBytes(entry.sizeHint);
+  if (bytes <= MOBILE_MODEL_MAX_BYTES) return 'small';
+  if (bytes < MEDIUM_MODEL_MAX_BYTES) return 'medium';
+  return 'large';
+}
+
+export function isMobileCatalogModel(entry: ModelCatalogEntry): boolean {
+  return catalogSizeBytes(entry.sizeHint) <= MOBILE_MODEL_MAX_BYTES;
+}
 
 export function catalogLabel(entry: ModelCatalogEntry): string {
   const badge = entry.badge ? ` (${entry.badge})` : '';
