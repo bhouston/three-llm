@@ -11,6 +11,7 @@
     "start": "pnpm --filter website start",
     "test": "pnpm test:unit",
     "test:unit": "pnpm tsc && vitest run --project library --project website",
+    "test:perf": "vitest run --project performance",
     "test:gpu": "vitest run --project library-gpu",
     "test:browser": "playwright test --config playwright.inference.config.ts",
     "test:checkpoints": "vitest run --project checkpoints --project checkpoints-gpu",

@@ -1,3 +1,4 @@
+import { ropeParameters } from '../runtime/rope.js';
 import { allocStorage, makeCompute, uploadStorage, workgroupCount, writeBuffer } from '../gpu/device.js';
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import type { AttentionKernelOptions } from '../types.js';
@@ -17,29 +18,15 @@ function headValueExpr(
     headDim: number;
     ropeTheta: number;
     rotaryDim: number;
-    ropeFreqDim: number;
     ropePairCount: number;
-    yarnFactor: number;
-    yarnOriginalContext: number;
+    attentionFactor: number;
     rmsEpsilon: number;
     offsetRMSNorm: boolean;
     normBinding: string | null;
   },
 ): string {
-  const {
-    headDim,
-    ropeTheta,
-    rotaryDim,
-    ropeFreqDim,
-    ropePairCount,
-    yarnFactor,
-    yarnOriginalContext,
-    rmsEpsilon,
-    offsetRMSNorm,
-    normBinding,
-  } = cfg;
+  const { headDim, ropeTheta, rotaryDim, ropePairCount, attentionFactor, rmsEpsilon, offsetRMSNorm, normBinding } = cfg;
   const hasRope = ropeTheta > 0 && rotaryDim > 0;
-  const hasYarn = yarnFactor > 1 && yarnOriginalContext > 0;
 
   if (!normBinding && !hasRope) {
     return `
@@ -50,27 +37,20 @@ function headValueExpr(
   }
 
   const half = Math.floor(rotaryDim / 2);
-  const angleExpr = (positionExpr: string, freqIndexExpr: string) =>
-    `${positionExpr} * pow(${ropeTheta}, f32(${freqIndexExpr}) * ${-2 / ropeFreqDim})`;
-  const effectivePositionExpr = hasYarn
-    ? `select(f32(tokenPos) / ${yarnFactor}, f32(tokenPos), tokenPos < ${yarnOriginalContext}u)`
-    : `f32(tokenPos)`;
 
   if (!normBinding) {
     // Pure RoPE, no norm: rotate raw QKV values in place.
     return `
       fn ${fnName}(headOffset: u32, localDim: u32, tokenPos: u32) -> f32 {
         let x = qkv[headOffset + localDim];
-        let inRotary = localDim < ${rotaryDim}u;
+        if (localDim >= ${rotaryDim}u) { return x; }
         let half = ${half}u;
         let freqIndex = localDim % half;
         let partnerIndex = select(headOffset + localDim - half, headOffset + localDim + half, localDim < half);
         let partnerRaw = qkv[partnerIndex];
         let partner = select(partnerRaw, -partnerRaw, localDim < half);
-        let effectivePosition = ${effectivePositionExpr};
-        let angle = select(0.0, ${angleExpr('effectivePosition', 'freqIndex')}, freqIndex < ${ropePairCount}u);
-        let rotated = x * cos(angle) + partner * sin(angle);
-        return select(x, rotated, inRotary);
+        let angle = select(0.0, f32(tokenPos) * ropeFreq[freqIndex], freqIndex < ${ropePairCount}u);
+        return (x * cos(angle) + partner * sin(angle)) * ${attentionFactor};
       }
     `;
   }
@@ -87,9 +67,8 @@ function headValueExpr(
         let partnerScale = ${normScaleExpr('partnerLocal')};
         let partnerScaled = partnerRaw * invRms * partnerScale;
         let partner = select(partnerScaled, -partnerScaled, localDim < half);
-        let effectivePosition = ${effectivePositionExpr};
-        let angle = select(0.0, ${angleExpr('effectivePosition', 'freqIndex')}, freqIndex < ${ropePairCount}u);
-        return x * cos(angle) + partner * sin(angle);
+        let angle = select(0.0, f32(tokenPos) * ropeFreq[freqIndex], freqIndex < ${ropePairCount}u);
+        return (x * cos(angle) + partner * sin(angle)) * ${attentionFactor};
     `
     : `
         return x;
@@ -175,8 +154,13 @@ class AttentionKernel {
     const rotaryDim = options.rotaryDim !== undefined ? options.rotaryDim : this.headDim;
     const ropeFreqDim = options.ropeFreqDim || rotaryDim;
     const ropePairCount = options.ropePairCount !== undefined ? options.ropePairCount : rotaryDim / 2;
-    const yarnFactor = options.yarn?.factor || 1;
-    const yarnOriginalContext = options.yarn?.originalContextLength || 0;
+    if (!Number.isInteger(rotaryDim) || rotaryDim < 0 || rotaryDim > this.headDim || rotaryDim % 2 !== 0)
+      throw new Error('Invalid rotary dimension.');
+    const rope =
+      ropeTheta > 0 && rotaryDim > 0
+        ? ropeParameters(ropeFreqDim, ropeTheta, options.ropeScaling ?? options.yarn)
+        : null;
+    const ropeBuffer = rope ? uploadStorage(gpu, rope.invFreq) : null;
     const rmsEpsilon = options.rmsEpsilon || 1e-6;
     const offsetRMSNorm = options.offsetRMSNorm === true;
     const vNorm = options.vNorm === true;
@@ -210,10 +194,8 @@ class AttentionKernel {
       headDim: this.headDim,
       ropeTheta,
       rotaryDim,
-      ropeFreqDim,
       ropePairCount,
-      yarnFactor,
-      yarnOriginalContext,
+      attentionFactor: rope?.attentionFactor ?? 1,
       rmsEpsilon,
       offsetRMSNorm,
     };
@@ -248,6 +230,7 @@ class AttentionKernel {
         @group(0) @binding(2) var<storage, read_write> keyCache: array<f32>;
         @group(0) @binding(3) var<storage, read_write> valueCache: array<f32>;
         ${kNormBuffer ? '@group(0) @binding(4) var<storage, read> kNorm: array<f32>;' : ''}
+        ${ropeBuffer ? '@group(0) @binding(5) var<storage, read> ropeFreq: array<f32>;' : ''}
 
         @compute @workgroup_size(${wg})
         fn cs_main(@builtin(global_invocation_id) id: vec3u) {
@@ -274,6 +257,7 @@ class AttentionKernel {
         valueCache: this.valueCacheBuffer,
       };
       if (kNormBuffer) set.kNorm = kNormBuffer;
+      if (ropeBuffer) set.ropeFreq = ropeBuffer;
 
       this.copyPass = makeCompute(gpu, source, { label: name ? `${name}CopyKV` : 'LLMAttentionCopyKV', set });
       this.copyWorkgroups = workgroupCount(this.kvSize, wg);
@@ -283,6 +267,7 @@ class AttentionKernel {
     {
       const set: Record<string, unknown> = { qkv: qkvBuffer, position: this.positionBuffer, query: this.queryBuffer };
       if (qNormBuffer) set.qNorm = qNormBuffer;
+      if (ropeBuffer) set.ropeFreq = ropeBuffer;
 
       const source = `
         ${queryValueFn}
@@ -291,6 +276,7 @@ class AttentionKernel {
         @group(0) @binding(1) var<storage, read> position: array<u32>;
         @group(0) @binding(2) var<storage, read_write> query: array<f32>;
         ${qNormBuffer ? '@group(0) @binding(3) var<storage, read> qNorm: array<f32>;' : ''}
+        ${ropeBuffer ? '@group(0) @binding(4) var<storage, read> ropeFreq: array<f32>;' : ''}
 
         @compute @workgroup_size(${wg})
         fn cs_main(@builtin(global_invocation_id) id: vec3u) {

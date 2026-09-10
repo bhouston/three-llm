@@ -9,9 +9,17 @@ export default defineConfig({
     projects: [
       {
         test: {
+          name: 'performance',
+          include: ['packages/vgpu-llm/src/**/*.perf.test.ts'],
+          environment: 'node',
+          fileParallelism: false,
+        },
+      },
+      {
+        test: {
           name: 'library',
           include: ['packages/vgpu-llm/src/**/*.test.ts'],
-          exclude: ['**/e2e/**', '**/*.gpu.test.ts', '**/*.checkpoint.test.ts'],
+          exclude: ['**/e2e/**', '**/*.gpu.test.ts', '**/*.checkpoint.test.ts', '**/*.perf.test.ts'],
           environment: 'node',
           coverage: {
             provider: 'v8',

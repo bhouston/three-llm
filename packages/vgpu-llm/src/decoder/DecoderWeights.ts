@@ -282,6 +282,7 @@ class DecoderWeights {
       const lnBias = this.mappedFloat('attn_norm_bias', index);
 
       return {
+        ropeScaling: recipe.ropeScaling,
         lnWeight,
         lnBias,
         ln1Weight: lnWeight,
@@ -322,6 +323,7 @@ class DecoderWeights {
     const block: DecoderBlock = {
       layerType,
       ropeTheta,
+      ropeScaling: this.config.model_type === 'kanana2_tiny' && isSlidingLayer ? undefined : recipe.ropeScaling,
       yarn: recipe.yarn && isSlidingLayer === false ? recipe.yarn : undefined,
       slidingWindow,
       ln1Weight: this.mappedFloat('attn_norm', index),

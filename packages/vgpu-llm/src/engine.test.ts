@@ -555,10 +555,10 @@ describe('math', () => {
     ).toBe(4095);
     expect(
       yarnRotaryAngle(4096, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 }),
-    ).toBe(512);
+    ).toBe(4096);
     expect(
       yarnRotaryAngle(8192, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 }),
-    ).toBe(1024);
+    ).toBe(8192);
 
     expect(architectureFor({ model_type: 'gpt2' })).toBe('gpt2');
     expect(architectureFor({ model_type: 'llama' })).toBe('llama');
@@ -717,6 +717,7 @@ describe('DecoderRecipe', () => {
       head_dim: 4,
       vocab_size: 16,
       full_attention_interval: 4,
+      rope_parameters: { partial_rotary_factor: 0.5 },
     });
     const mistral = recipeFor({
       model_type: 'mistral',

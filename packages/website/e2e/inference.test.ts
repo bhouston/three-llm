@@ -62,3 +62,54 @@ test('browser executes FP32 linear inference with a partial workgroup', async ({
     contentType: 'application/json',
   });
 });
+
+test('browser YaRN logits match pinned Transformers with immediate and batched submission', async ({ page }) => {
+  const { readFileSync } = await import('node:fs');
+  const referenceFixture = JSON.parse(
+    readFileSync(path.join(libraryPath, 'src/test/fixtures/transformers-llama.json'), 'utf8'),
+  );
+  await page.goto('/');
+  const normalizedErrors = await page.evaluate(
+    async ({ library, vgpu, reference }) => {
+      const { init } = await import(/* @vite-ignore */ vgpu);
+      const { DecoderWeights } = await import(/* @vite-ignore */ `${library}/src/decoder/DecoderWeights.ts`);
+      const { DecoderGpuRunner } = await import(/* @vite-ignore */ `${library}/src/decoder/DecoderGpuRunner.ts`);
+      const fixture = reference.cases.find((entry: { name: string }) => entry.name === 'yarn');
+      const gpu = await init();
+      try {
+        const errors = [];
+        for (const batchCompute of [false, true]) {
+          const tensors = Object.fromEntries(
+            Object.entries(reference.tensors).map(([name, entry]) => {
+              const tensor = entry as { shape: number[]; values: number[] };
+              return [name, { name, shape: tensor.shape, dtype: 'F32', data: new Float32Array(tensor.values) }];
+            }),
+          );
+          const weights = new DecoderWeights(fixture.config, tensors, {
+            endOfTextTokenId: 0,
+            encode: () => [],
+            decode: () => '',
+          });
+          const runner = new DecoderGpuRunner(gpu, weights, { batchCompute, maxTokens: 64, prefillChunkSize: 7 });
+          const last = reference.input_ids.length - 1;
+          await runner.prefillTokens(reference.input_ids, 0, last);
+          runner.computeToken(reference.input_ids[last], last);
+          const actual = await runner.readLogits();
+          for (let i = 0; i < actual.length; i++)
+            errors.push(
+              Math.abs(actual[i] - fixture.logits[last][i]) / (3e-5 + 2e-4 * Math.abs(fixture.logits[last][i])),
+            );
+        }
+        return errors;
+      } finally {
+        gpu.dispose();
+      }
+    },
+    { library: `/@fs${libraryPath}`, vgpu: `/@fs${require.resolve('vgpu')}`, reference: referenceFixture },
+  );
+  expect(normalizedErrors.length).toBe(34);
+  for (const error of normalizedErrors) {
+    expect(Number.isFinite(error)).toBe(true);
+    expect(error).toBeLessThanOrEqual(1);
+  }
+});

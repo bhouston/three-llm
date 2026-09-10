@@ -120,3 +120,22 @@ pnpm format         # format the repository with Oxfmt
 ## License
 
 [MIT](LICENSE) © 2026 Ben Houston
+
+### Inference validation and profiling
+
+The decoder supports default, linear, YaRN, and Llama 3 RoPE scaling for dense
+Llama-family/Phi recipes. Unsupported scaling configurations fail explicitly.
+Pinned Transformers fixtures test CPU/GPU logits, FP16 weight storage, rotary
+Q/K values, and chunked prefill. See [fixture generation](scripts/reference/README.md).
+
+GPU runners batch token and prefill-chunk dispatches by default. Set
+`batchCompute: false` to compare with immediate submission. The batching adapter
+currently bridges `vgpu` 0.4's internal pipeline/binding handles because it has no
+public compute-encoding API, and falls back to public dispatch if those handles
+are unavailable. Host buffer writes flush queued work to preserve ordering.
+
+`pnpm test:perf` runs paired normalization and submission benchmarks and writes
+raw samples plus adapter metadata under `profile-output/`. Normalization uses
+GPU timestamps (requires `timestamp-query` and `shader-f16`); submission timing
+includes CPU encoding and completed queue work. These are measurement tools,
+not universal CI speed thresholds or production-model throughput estimates.

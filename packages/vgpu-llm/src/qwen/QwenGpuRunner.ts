@@ -6,6 +6,7 @@ import {
   uploadWeightStorage,
   workgroupCount,
   writeBuffer,
+  withComputeBatch,
 } from '../gpu/device.js';
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import { generateAsync } from '../runtime/generate.js';
@@ -68,6 +69,7 @@ class QwenGpuRunner {
   workgroupSize: number;
   logitChunkSize: number;
   prefillChunkSize: number;
+  batchCompute: boolean;
   hiddenSize: number;
   precision: Precision;
   /** Approximate total GPU storage bytes allocated for this runner (weights, KV caches, activations). */
@@ -97,6 +99,7 @@ class QwenGpuRunner {
     this.maxTokens = Math.min(options.maxTokens || weights.contextLimit(), weights.contextLimit());
     this.workgroupSize = options.workgroupSize || 64;
     this.logitChunkSize = options.logitChunkSize || 8192;
+    this.batchCompute = options.batchCompute !== false;
     this.prefillChunkSize = options.prefillChunkSize || 32;
     this.hiddenSize = weights.hiddenSize;
     this.precision = options.precision || 'fp32';
@@ -386,9 +389,12 @@ class QwenGpuRunner {
     writeBuffer(this.embeddingBuffer, this.embeddingScratch);
     this.setPosition(position);
 
-    this.runForward(computeLogits);
-
-    if (computeLogits && sampleCandidateCount > 0) this.logitSampler.run(sampleCandidateCount);
+    const work = () => {
+      this.runForward(computeLogits);
+      if (computeLogits && sampleCandidateCount > 0) this.logitSampler.run(sampleCandidateCount);
+    };
+    if (this.batchCompute) withComputeBatch(this.gpu, work);
+    else work();
   }
 
   async prefillTokens(
@@ -412,11 +418,15 @@ class QwenGpuRunner {
       writeBuffer(this.prefillCursorBuffer, new Uint32Array([0]));
       this.setPosition(offset);
 
-      for (let i = 0; i < count; i++) {
-        this.prefillCopyPass.dispatch(this.prefillCopyWorkgroups);
-        this.runForward(false);
-        this.prefillAdvancePass.dispatch(1);
-      }
+      const work = () => {
+        for (let i = 0; i < count; i++) {
+          this.prefillCopyPass.dispatch(this.prefillCopyWorkgroups);
+          this.runForward(false);
+          this.prefillAdvancePass.dispatch(1);
+        }
+      };
+      if (this.batchCompute) withComputeBatch(this.gpu, work);
+      else work();
 
       if (onProgress) await onProgress(offset + count);
     }
@@ -427,7 +437,7 @@ class QwenGpuRunner {
   }
 
   async sampleToken(candidateCount: number, options: SampleOptions): Promise<number> {
-    return this.logitSampler.sampleToken(candidateCount, options);
+    return this.logitSampler.sampleToken(candidateCount, options, this.batchCompute);
   }
 
   resetCaches(): void {

@@ -1,7 +1,14 @@
-import { workgroupSum } from './reduction.js';
-import { allocStorage, makeCompute, requireShaderF16, wgslEnableDirective, wgslScalarType } from '../gpu/device.js';
-import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
-import type { KernelOptions } from '../types.js';
+// Frozen pre-reduction implementation for paired performance/correctness comparisons.
+import {
+  allocStorage,
+  makeCompute,
+  requireShaderF16,
+  wgslEnableDirective,
+  wgslScalarType,
+  workgroupCount,
+} from '../../gpu/device.js';
+import type { Compute, Gpu, StorageBuffer } from '../../gpu/device.js';
+import type { KernelOptions } from '../../types.js';
 
 interface RMSNormOptions extends KernelOptions {
   epsilon?: number;
@@ -17,7 +24,7 @@ interface RMSNormOptions extends KernelOptions {
  * `fp32`) — e.g. via `uploadWeightStorage` — since this kernel only picks
  * the matching WGSL element type for it; it does not own the upload.
  */
-class RMSNormKernel {
+class BaselineRMSNormKernel {
   hiddenSize: number;
   epsilon: number;
   offsetWeight: boolean;
@@ -34,7 +41,7 @@ class RMSNormKernel {
     options: RMSNormOptions = {},
   ) {
     this.hiddenSize = hiddenSize;
-    this.epsilon = options.epsilon ?? 1e-5;
+    this.epsilon = options.epsilon || 1e-5;
     this.offsetWeight = options.offsetWeight === true;
     this.weightBuffer = weightBuffer;
     this.outputBuffer = allocStorage(gpu, hiddenSize);
@@ -51,21 +58,20 @@ class RMSNormKernel {
       @group(0) @binding(1) var<storage, read> weight: array<${weightType}>;
       @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 
-      ${workgroupSum(workgroupSize)}
       @compute @workgroup_size(${workgroupSize})
-      fn cs_main(@builtin(local_invocation_index) lane: u32) {
+      fn cs_main(@builtin(global_invocation_id) id: vec3u) {
+        let index = id.x;
+        if (index >= ${hiddenSize}u) { return; }
 
         var sumSquares: f32 = 0.0;
-        for (var i: u32 = lane; i < ${hiddenSize}u; i = i + ${workgroupSize}u) {
+        for (var i: u32 = 0u; i < ${hiddenSize}u; i = i + 1u) {
           let value = input[i];
           sumSquares = sumSquares + value * value;
         }
 
-        let invRms = inverseSqrt(sum_lanes(sumSquares, lane) / f32(${hiddenSize}u) + ${this.epsilon});
-        for (var index = lane; index < ${hiddenSize}u; index = index + ${workgroupSize}u) {
-          let scale = ${scaleExpr};
-          output[index] = input[index] * invRms * scale;
-        }
+        let invRms = inverseSqrt(sumSquares / f32(${hiddenSize}u) + ${this.epsilon});
+        let scale = ${scaleExpr};
+        output[index] = input[index] * invRms * scale;
       }
     `;
 
@@ -73,7 +79,7 @@ class RMSNormKernel {
       label: options.name || 'LLMRMSNorm',
       set: { input: inputBuffer, weight: weightBuffer, output: this.outputBuffer },
     });
-    this.workgroups = 1;
+    this.workgroups = workgroupCount(hiddenSize, workgroupSize);
   }
 
   run(): StorageBuffer {
@@ -82,4 +88,4 @@ class RMSNormKernel {
   }
 }
 
-export { RMSNormKernel };
+export { BaselineRMSNormKernel };

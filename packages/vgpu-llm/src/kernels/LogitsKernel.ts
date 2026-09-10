@@ -1,4 +1,4 @@
-import { allocStorage, makeCompute, readFloat32, readUint32, workgroupCount } from '../gpu/device.js';
+import { allocStorage, makeCompute, readFloat32, readUint32, workgroupCount, withComputeBatch } from '../gpu/device.js';
 import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
 import { LinearKernel } from './LinearKernel.js';
 import { sampleTopKCandidates } from '../runtime/math.js';
@@ -90,6 +90,7 @@ async function readChunkedLogits(chunks: LogitChunk[], vocabSize: number): Promi
  * chunk's next candidate into the next global rank.
  */
 class LogitSampler {
+  private gpu: Gpu;
   chunks: LogitChunk[];
   candidateCount: number;
   workgroupSize: number;
@@ -111,6 +112,7 @@ class LogitSampler {
   candidateLevels: Array<{ chunkPasses: Compute[]; globalPass: Compute }>;
 
   constructor(gpu: Gpu, chunks: LogitChunk[], options: LogitSamplerOptions = {}) {
+    this.gpu = gpu;
     this.chunks = chunks;
     this.candidateCount = Math.max(1, options.candidateCount || 8);
     this.workgroupSize = options.workgroupSize || 256;
@@ -405,8 +407,9 @@ class LogitSampler {
     return candidates;
   }
 
-  async sampleToken(count: number, options: SampleOptions): Promise<number> {
-    this.run(count);
+  async sampleToken(count: number, options: SampleOptions, batchCompute = false): Promise<number> {
+    if (batchCompute) withComputeBatch(this.gpu, () => this.run(count));
+    else this.run(count);
 
     if (count <= 1 || options.temperature! <= 0) return this.readToken();
 

@@ -1,3 +1,5 @@
+import { batchableCompute, flushComputeBatch } from './batch.js';
+export { withComputeBatch } from './batch.js';
 import { compute, storage } from 'vgpu';
 import type { Compute, Gpu, StorageBuffer } from 'vgpu';
 import type { Precision } from '../types.js';
@@ -18,6 +20,8 @@ export type { Precision };
  * multiple runners/tests don't share counts, and a `WeakMap` so it never
  * outlives the `Gpu` it tracks.
  */
+const bufferOwners = new WeakMap<StorageBuffer, Gpu>();
+
 const allocatedBytesByGpu = new WeakMap<Gpu, number>();
 
 function trackAllocation(gpu: Gpu, bytes: number): void {
@@ -41,7 +45,9 @@ function gpuMemoryBytes(gpu: Gpu): number {
 function allocStorage(gpu: Gpu, length: number, access: 'read' | 'read-write' = 'read-write'): StorageBuffer {
   const byteSize = Math.max(length, 1) * 4;
   trackAllocation(gpu, byteSize);
-  return storage(gpu, byteSize, access);
+  const buffer = storage(gpu, byteSize, access);
+  bufferOwners.set(buffer, gpu);
+  return buffer;
 }
 
 /**
@@ -67,6 +73,8 @@ function uploadStorage(
  * The values are real `ArrayBuffer`-backed views; this centralizes the cast.
  */
 function writeBuffer(buffer: StorageBuffer, data: Float32Array | Uint32Array | Int32Array | Uint16Array): void {
+  const gpu = bufferOwners.get(buffer);
+  if (gpu) flushComputeBatch(gpu);
   buffer.write(data as unknown as BufferSource);
 }
 
@@ -162,6 +170,7 @@ function uploadWeightStorage(
   const byteSize = Math.max(paddedLength, 2) * 2;
   trackAllocation(gpu, byteSize);
   const buffer = storage(gpu, byteSize, access);
+  bufferOwners.set(buffer, gpu);
   writeBuffer(buffer, padded);
   return buffer;
 }
@@ -178,11 +187,15 @@ function wgslEnableDirective(precision: Precision): string {
 
 /** Reads a storage buffer back as a `Float32Array`. */
 async function readFloat32(buffer: StorageBuffer): Promise<Float32Array> {
+  const gpu = bufferOwners.get(buffer);
+  if (gpu) flushComputeBatch(gpu);
   return new Float32Array(await buffer.read());
 }
 
 /** Reads a storage buffer back as a `Uint32Array`. */
 async function readUint32(buffer: StorageBuffer): Promise<Uint32Array> {
+  const gpu = bufferOwners.get(buffer);
+  if (gpu) flushComputeBatch(gpu);
   return new Uint32Array(await buffer.read());
 }
 
@@ -192,7 +205,7 @@ async function readUint32(buffer: StorageBuffer): Promise<Uint32Array> {
  * `set()`/`dispatch()` per token).
  */
 function makeCompute(gpu: Gpu, source: string, opts: Parameters<typeof compute>[2] = {}): Compute {
-  return compute(gpu, source, opts);
+  return batchableCompute(gpu, compute(gpu, source, opts));
 }
 
 /** Ceil-divides `total` work items across a fixed WGSL `@workgroup_size(wg)`. */

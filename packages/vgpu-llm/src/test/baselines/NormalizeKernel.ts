@@ -1,7 +1,14 @@
-import { workgroupSum } from './reduction.js';
-import { allocStorage, makeCompute, requireShaderF16, wgslEnableDirective, wgslScalarType } from '../gpu/device.js';
-import type { Compute, Gpu, StorageBuffer } from '../gpu/device.js';
-import type { KernelOptions } from '../types.js';
+// Frozen pre-reduction implementation for paired performance/correctness comparisons.
+import {
+  allocStorage,
+  makeCompute,
+  requireShaderF16,
+  wgslEnableDirective,
+  wgslScalarType,
+  workgroupCount,
+} from '../../gpu/device.js';
+import type { Compute, Gpu, StorageBuffer } from '../../gpu/device.js';
+import type { KernelOptions } from '../../types.js';
 
 interface NormalizeOptions extends KernelOptions {
   epsilon?: number;
@@ -14,7 +21,7 @@ interface NormalizeOptions extends KernelOptions {
  * (default `fp32`) — e.g. via `uploadWeightStorage` — since this kernel only
  * picks the matching WGSL element type for them; it does not own the upload.
  */
-class NormalizeKernel {
+class BaselineNormalizeKernel {
   hiddenSize: number;
   epsilon: number;
   outputBuffer: StorageBuffer;
@@ -32,7 +39,7 @@ class NormalizeKernel {
     options: NormalizeOptions = {},
   ) {
     this.hiddenSize = hiddenSize;
-    this.epsilon = options.epsilon ?? 1e-5;
+    this.epsilon = options.epsilon || 1e-5;
     this.weightBuffer = weightBuffer;
     this.biasBuffer = biasBuffer;
     this.outputBuffer = allocStorage(gpu, hiddenSize);
@@ -49,29 +56,26 @@ class NormalizeKernel {
       @group(0) @binding(2) var<storage, read> bias: array<${weightType}>;
       @group(0) @binding(3) var<storage, read_write> output: array<f32>;
 
-      ${workgroupSum(workgroupSize)}
       @compute @workgroup_size(${workgroupSize})
-      fn cs_main(@builtin(local_invocation_index) lane: u32) {
+      fn cs_main(@builtin(global_invocation_id) id: vec3u) {
+        let index = id.x;
+        if (index >= ${hiddenSize}u) { return; }
 
-        // Accumulate relative to an anchor so constant/near-constant inputs
-        // do not lose their small differences when computing the mean.
         var mean: f32 = 0.0;
-        for (var i: u32 = lane; i < ${hiddenSize}u; i = i + ${workgroupSize}u) {
-          mean = mean + (input[i] - input[0]);
+        for (var i: u32 = 0u; i < ${hiddenSize}u; i = i + 1u) {
+          mean = mean + input[i];
         }
-        mean = sum_lanes(mean, lane) / f32(${hiddenSize}u);
+        mean = mean / f32(${hiddenSize}u);
 
         var variance: f32 = 0.0;
-        for (var i: u32 = lane; i < ${hiddenSize}u; i = i + ${workgroupSize}u) {
-          let delta = (input[i] - input[0]) - mean;
+        for (var i: u32 = 0u; i < ${hiddenSize}u; i = i + 1u) {
+          let delta = input[i] - mean;
           variance = variance + delta * delta;
         }
-        variance = sum_lanes(variance, lane) / f32(${hiddenSize}u);
+        variance = variance / f32(${hiddenSize}u);
 
-        for (var index = lane; index < ${hiddenSize}u; index = index + ${workgroupSize}u) {
-        let value = ((input[index] - input[0]) - mean) * inverseSqrt(variance + ${this.epsilon}) * f32(weight[index]) + f32(bias[index]);
+        let value = (input[index] - mean) * inverseSqrt(variance + ${this.epsilon}) * f32(weight[index]) + f32(bias[index]);
         output[index] = value;
-        }
       }
     `;
 
@@ -79,7 +83,7 @@ class NormalizeKernel {
       label: options.name || 'LLMLayerNorm',
       set: { input: inputBuffer, weight: weightBuffer, bias: biasBuffer, output: this.outputBuffer },
     });
-    this.workgroups = 1;
+    this.workgroups = workgroupCount(hiddenSize, workgroupSize);
   }
 
   run(): StorageBuffer {
@@ -88,4 +92,4 @@ class NormalizeKernel {
   }
 }
 
-export { NormalizeKernel };
+export { BaselineNormalizeKernel };

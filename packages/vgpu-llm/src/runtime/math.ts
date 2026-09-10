@@ -1,3 +1,4 @@
+import { ropeParameters } from './rope.js';
 import type { CausalAttentionOptions } from '../types.js';
 
 type FloatVec = Float32Array;
@@ -111,6 +112,7 @@ interface RopeOptions {
   ropeFreqDim?: number;
   ropePairCount?: number;
   yarn?: CausalAttentionOptions['yarn'];
+  ropeScaling?: CausalAttentionOptions['ropeScaling'];
 }
 
 function applyRoPE(
@@ -127,6 +129,7 @@ function applyRoPE(
   const freqDim = options.ropeFreqDim || rotaryDim;
   const pairCount = options.ropePairCount !== undefined ? options.ropePairCount : half;
   const rotated = new Float32Array(rotaryDim);
+  const { invFreq, attentionFactor } = ropeParameters(freqDim, theta, options.ropeScaling ?? options.yarn);
 
   for (let i = 0; i < rotaryDim; i++) {
     const x = vector[headOffset + i];
@@ -138,9 +141,9 @@ function applyRoPE(
     }
 
     const partner = i < half ? -vector[headOffset + i + half] : vector[headOffset + i - half];
-    const angle = yarnRotaryAngle(position, freqIndex, freqDim, theta, options.yarn);
+    const angle = position * invFreq[freqIndex];
 
-    rotated[i] = x * Math.cos(angle) + partner * Math.sin(angle);
+    rotated[i] = (x * Math.cos(angle) + partner * Math.sin(angle)) * attentionFactor;
   }
 
   for (let i = 0; i < rotaryDim; i++) vector[headOffset + i] = rotated[i];
@@ -192,6 +195,7 @@ function causalAttention(qkv: FloatVec, options: AttentionOptions): FloatVec {
     ropeFreqDim = rotaryDim,
     ropePairCount,
     yarn,
+    ropeScaling,
     queryOnly = false,
     writeCache = true,
     vNorm = false,
@@ -202,7 +206,7 @@ function causalAttention(qkv: FloatVec, options: AttentionOptions): FloatVec {
   const query = qkv.slice(0, qSize);
   const key = queryOnly ? null : qkv.slice(qSize, qSize + kvSize);
   const firstToken = slidingWindow > 0 ? Math.max(0, position - slidingWindow + 1) : 0;
-  const ropeOptions = { ropeFreqDim, ropePairCount, yarn };
+  const ropeOptions = { ropeFreqDim, ropePairCount, yarn, ropeScaling };
 
   if (qNormWeight !== null) rmsNormPackedHeads(query, headCount, headDim, qNormWeight, rmsEpsilon, offsetRMSNorm);
 
@@ -282,10 +286,7 @@ function yarnRotaryAngle(
   theta: number,
   yarn?: CausalAttentionOptions['yarn'],
 ): number {
-  if (yarn === undefined || position < yarn.originalContextLength)
-    return rotaryAngle(position, freqIndex, rotaryDim, theta);
-
-  return rotaryAngle(position / yarn.factor, freqIndex, rotaryDim, theta);
+  return position * ropeParameters(rotaryDim, theta, yarn).invFreq[freqIndex];
 }
 
 function softplus(x: number): number {

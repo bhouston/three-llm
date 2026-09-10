@@ -1,3 +1,4 @@
+import { ropeParameters } from '../runtime/rope.js';
 import { unwrapTextConfig } from './tensors.js';
 import { keepQwenTensor } from './TensorNameMap.js';
 import type {
@@ -6,7 +7,7 @@ import type {
   DecoderRecipe,
   HuggingFaceConfig,
   TokenizerKind,
-  YarnRoPEConfig,
+  RopeScalingConfig,
 } from '../types.js';
 
 const DEFAULT_EXAMPLE_CONTEXT_LIMIT = 2048;
@@ -99,24 +100,83 @@ function denseChatTemplate(text: HuggingFaceConfig): ChatTemplateKind | undefine
   return undefined;
 }
 
-function yarnConfig(text: HuggingFaceConfig): YarnRoPEConfig | undefined {
+function scalingConfig(text: HuggingFaceConfig, architecture: Architecture): RopeScalingConfig | undefined {
+  if (text.rope_parameters) {
+    if (architecture !== 'qwen3_5')
+      throw new Error('Unsupported rope_parameters configuration; use rope_scaling for this architecture.');
+    const allowedParameters = new Set([
+      'rope_type',
+      'rope_theta',
+      'partial_rotary_factor',
+      'mrope_section',
+      'mrope_interleaved',
+    ]);
+    for (const key of Object.keys(text.rope_parameters))
+      if (!allowedParameters.has(key)) throw new Error(`Unsupported rope_parameters field "${key}".`);
+  }
   const scaling = text.rope_scaling;
-  const ropeType = scaling?.rope_type || scaling?.type;
-
-  if (scaling === undefined || ropeType !== 'yarn' || scaling.factor === undefined) return undefined;
-
+  const parameterType = text.rope_parameters?.rope_type;
+  if (parameterType && parameterType !== 'default')
+    throw new Error(`Unsupported rope_parameters type "${parameterType}".`);
+  if (!scaling) return undefined;
+  if (scaling.rope_type && scaling.type && scaling.rope_type !== scaling.type)
+    throw new Error('Conflicting RoPE scaling types.');
+  const type = scaling.rope_type ?? scaling.type;
+  if (type === 'default') {
+    if (Object.keys(scaling).some((key) => key !== 'rope_type' && key !== 'type'))
+      throw new Error('Default RoPE cannot include scaling parameters.');
+    return undefined;
+  }
+  if (architecture !== 'llama' && architecture !== 'phi')
+    throw new Error(`RoPE scaling is not supported for ${architecture}.`);
+  if (type !== 'yarn' && type !== 'linear' && type !== 'llama3')
+    throw new Error(`Unsupported RoPE scaling type "${type}".`);
+  const allowed = new Set([
+    'type',
+    'rope_type',
+    'factor',
+    ...(type === 'yarn'
+      ? ['original_max_position_embeddings', 'beta_fast', 'beta_slow', 'attention_factor', 'mscale', 'mscale_all_dim']
+      : type === 'llama3'
+        ? ['original_max_position_embeddings', 'low_freq_factor', 'high_freq_factor']
+        : []),
+  ]);
+  for (const key of Object.keys(scaling))
+    if (!allowed.has(key)) throw new Error(`Unsupported ${type} RoPE parameter "${key}".`);
+  if (!Number.isFinite(scaling.factor) || scaling.factor! < 1) throw new Error('Invalid RoPE scaling factor.');
+  if (type === 'linear') return { type, factor: scaling.factor! };
+  const originalContextLength = scaling.original_max_position_embeddings ?? text.max_position_embeddings!;
+  if (type === 'llama3')
+    return {
+      type,
+      factor: scaling.factor!,
+      originalContextLength,
+      lowFreqFactor: scaling.low_freq_factor!,
+      highFreqFactor: scaling.high_freq_factor!,
+    };
+  // Transformers 4.51.3 derives the effective factor from the context ratio
+  // when original_max_position_embeddings is explicitly supplied.
+  const factor =
+    scaling.original_max_position_embeddings !== undefined
+      ? text.max_position_embeddings! / originalContextLength
+      : scaling.factor!;
+  const mscale = (value: number) => (factor <= 1 ? 1 : 1 + 0.1 * value * Math.log(factor));
   return {
-    factor: scaling.factor,
-    originalContextLength: scaling.original_max_position_embeddings || 4096,
-    betaFast: scaling.beta_fast || 32,
-    betaSlow: scaling.beta_slow || 1,
-    attentionFactor: scaling.attention_factor,
+    type,
+    factor,
+    originalContextLength,
+    betaFast: scaling.beta_fast ?? 32,
+    betaSlow: scaling.beta_slow ?? 1,
+    attentionFactor:
+      scaling.attention_factor ??
+      (scaling.mscale && scaling.mscale_all_dim ? mscale(scaling.mscale) / mscale(scaling.mscale_all_dim) : mscale(1)),
   };
 }
 
-function recipeFor(config: HuggingFaceConfig): DecoderRecipe {
+function buildRecipe(config: HuggingFaceConfig): DecoderRecipe {
   const architecture = architectureFor(config);
   const text = unwrapTextConfig(config);
+  const ropeScaling = scalingConfig(text, architecture);
 
   if (architecture === 'gpt2') {
     const hiddenSize = text.n_embd as number;
@@ -180,7 +240,8 @@ function recipeFor(config: HuggingFaceConfig): DecoderRecipe {
       embedScale: 1,
       attnScale: undefined,
       ropeTheta: text.rope_theta || 10000,
-      rotaryDim: text.rotary_dim || Math.round((text.partial_rotary_factor || 0.5) * headDim),
+      rotaryDim: text.rotary_dim ?? Math.floor((text.partial_rotary_factor ?? 0.5) * headDim),
+      ropeScaling,
       endOfTextTokenId: firstEos(text.eos_token_id, 0),
     };
   }
@@ -299,7 +360,7 @@ function recipeFor(config: HuggingFaceConfig): DecoderRecipe {
         )
     : text.layer_types;
   const slidingWindow = text.use_sliding_window === false ? 0 : text.sliding_window || (isKanana ? 1024 : 0);
-  const yarn = isKanana ? yarnConfig(text) : undefined;
+  const yarn = ropeScaling?.type === 'yarn' ? ropeScaling : undefined;
 
   return {
     architecture: 'llama',
@@ -331,7 +392,7 @@ function recipeFor(config: HuggingFaceConfig): DecoderRecipe {
     ropeTheta: text.rope_theta || 10000,
     rotaryDim:
       text.rotary_dim ??
-      (text.partial_rotary_factor !== undefined ? Math.round(text.partial_rotary_factor * headDim) : headDim),
+      (text.partial_rotary_factor !== undefined ? Math.floor(text.partial_rotary_factor * headDim) : headDim),
     globalRopeTheta: text.rope_theta || 10000,
     localRopeTheta: text.rope_local_base_freq || text.rope_theta || 10000,
     slidingWindow,
@@ -340,7 +401,22 @@ function recipeFor(config: HuggingFaceConfig): DecoderRecipe {
     stopTokenIds: eosIds(text.eos_token_id, 0),
     chatTemplate: denseChatTemplate(text),
     yarn,
+    ropeScaling,
   };
+}
+
+function recipeFor(config: HuggingFaceConfig): DecoderRecipe {
+  const recipe = buildRecipe(config);
+  if (
+    !Number.isInteger(recipe.rotaryDim) ||
+    recipe.rotaryDim < 0 ||
+    recipe.rotaryDim > recipe.headDim ||
+    recipe.rotaryDim % 2 !== 0
+  )
+    throw new Error('Invalid rotary dimension: expected an even integer within the head dimension.');
+  if (recipe.position === 'rope')
+    ropeParameters(recipe.rotaryDim, recipe.ropeTheta ?? recipe.globalRopeTheta!, recipe.ropeScaling);
+  return recipe;
 }
 
 export { architectureFor, recipeFor };
