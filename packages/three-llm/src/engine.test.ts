@@ -50,7 +50,13 @@ import { QwenTSLRunner } from './qwen/QwenTSLRunner.js';
 import { loadSafetensorsModel, parseSafeTensors, resolveSafetensorFiles } from './load/SafeTensorsLoader.js';
 import { resolveTensor } from './load/TensorNameMap.js';
 import { UnigramTokenizer } from './load/UnigramTokenizer.js';
-import { closeArray, createTinyKanana, createTinyLlama, createTinyQwen2, createTinyQwenWeights } from './test/helpers.js';
+import {
+  closeArray,
+  createTinyKanana,
+  createTinyLlama,
+  createTinyQwen2,
+  createTinyQwenWeights,
+} from './test/helpers.js';
 import type { TensorMap } from './types.js';
 
 function createSafeTensorsFixture(dtype: 'F32' | 'F16' = 'F32', values: number[] = [1, 2, 3, 4]) {
@@ -543,9 +549,15 @@ describe('math', () => {
 
     const rope = applyRoPE(new Float32Array([1, 0, 0, 1]), 0, 4, 1, 10000);
     expect(Math.abs(rope[0]! - Math.cos(1))).toBeLessThan(1e-5);
-    expect(yarnRotaryAngle(4095, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 })).toBe(4095);
-    expect(yarnRotaryAngle(4096, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 })).toBe(512);
-    expect(yarnRotaryAngle(8192, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 })).toBe(1024);
+    expect(
+      yarnRotaryAngle(4095, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 }),
+    ).toBe(4095);
+    expect(
+      yarnRotaryAngle(4096, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 }),
+    ).toBe(4096);
+    expect(
+      yarnRotaryAngle(8192, 0, 4, 10000, { factor: 8, originalContextLength: 4096, betaFast: 32, betaSlow: 1 }),
+    ).toBe(8192);
 
     expect(architectureFor({ model_type: 'gpt2' })).toBe('gpt2');
     expect(architectureFor({ model_type: 'llama' })).toBe('llama');
@@ -702,6 +714,7 @@ describe('DecoderRecipe', () => {
       num_attention_heads: 2,
       num_key_value_heads: 1,
       head_dim: 4,
+      rope_parameters: { partial_rotary_factor: 0.5 },
       vocab_size: 16,
       full_attention_interval: 4,
     });
@@ -765,7 +778,12 @@ describe('DecoderRecipe', () => {
     expect(qwen3.qkNorm).toBe(true);
     expect(qwen3.chatTemplate).toBe('qwen3');
     expect(kanana.tokenizer).toBe('llama3');
-    expect(kanana.layerTypes).toEqual(['sliding_attention', 'sliding_attention', 'sliding_attention', 'full_attention']);
+    expect(kanana.layerTypes).toEqual([
+      'sliding_attention',
+      'sliding_attention',
+      'sliding_attention',
+      'full_attention',
+    ]);
     expect(kanana.yarn?.factor).toBe(8);
     expect(() => architectureFor({ model_type: 'gemma2' })).toThrow(/Unsupported model_type "gemma2"/);
   });

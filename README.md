@@ -96,3 +96,22 @@ pnpm format         # format the repository with Oxfmt
 ## License
 
 [MIT](LICENSE) © 2026 Ben Houston
+
+## Inference validation
+
+`pnpm test:unit` checks CPU inference, recipe validation, and fixture integrity.
+`pnpm test:browser` executes TSL kernels in Playwright's full Chromium headless
+mode with WebGPU enabled. The independent reference tests require a working
+WebGPU adapter and fail if one is unavailable.
+
+Pinned Transformers fixtures cover default, linear, YaRN, and Llama 3 RoPE,
+including tokenwise logits and chunked prefill. Unsupported scaling types are
+rejected instead of silently ignored. See [fixture generation](scripts/reference/README.md).
+
+Run `pnpm test:performance`, then
+`python3 scripts/summarize-inference-benchmarks.py` for paired normalization and
+submission measurements. Raw samples, adapter metadata, and bootstrap summaries
+are written under ignored `profile-output/`. Benchmarks run sequentially and
+compare frozen baseline normalization kernels or identical kernels with separate
+submissions. They report device-specific microbenchmarks, not model throughput;
+run them on the target hardware before drawing deployment conclusions.

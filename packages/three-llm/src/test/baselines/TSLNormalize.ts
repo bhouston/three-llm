@@ -1,8 +1,8 @@
-import { workgroupSum } from './TSLReduction.js';
+// Frozen baseline from main 4e0ec8c; used only for paired measurements.
 import { StorageBufferAttribute } from 'three/webgpu';
-import { Fn, Loop, float, localId, inversesqrt, storage, storageBarrier, uint } from 'three/tsl';
+import { Fn, Loop, float, instanceIndex, inversesqrt, storage, uint } from 'three/tsl';
 
-import type { KernelOptions, Renderer, TslNode } from '../types.js';
+import type { KernelOptions, Renderer, TslNode } from '../../types.js';
 
 interface NormalizeOptions extends KernelOptions {
   epsilon?: number;
@@ -34,11 +34,11 @@ class TSLNormalize {
   ) {
     this.inputNode = inputNode;
     this.hiddenSize = hiddenSize;
-    this.epsilon = options.epsilon ?? 1e-5;
+    this.epsilon = options.epsilon || 1e-5;
     this.workgroupSize = options.workgroupSize || 64;
 
     this.weightAttribute = new StorageBufferAttribute(weightArray, 1);
-    this.biasAttribute = new StorageBufferAttribute(biasArray ?? new Float32Array(hiddenSize), 1);
+    this.biasAttribute = new StorageBufferAttribute(biasArray as Float32Array, 1);
     this.outputAttribute = new StorageBufferAttribute(new Float32Array(hiddenSize), 1);
 
     this.weightNode = storage(this.weightAttribute, 'float', hiddenSize)
@@ -58,39 +58,34 @@ class TSLNormalize {
     const { inputNode, weightNode, biasNode, outputNode, hiddenSize, epsilon, workgroupSize } = this;
 
     return Fn(() => {
-      const lane = localId.x;
-      const each = (body: (index: TslNode) => void) =>
-        Loop(
-          { start: lane, end: uint(hiddenSize), type: 'uint', condition: '<', update: workgroupSize },
-          ({ i }: { i: TslNode }) => body(i),
-        );
-      // Center on the first element to preserve small differences on large offsets.
-      const origin = inputNode.element(uint(0)).toVar();
-      // Materialize centered values across a storage barrier: Metal may otherwise
-      // reassociate x - origin - mean into x - (origin + mean).
-      each((i) => {
-        outputNode.element(i).assign(inputNode.element(i).sub(origin));
+      const index = instanceIndex.toVar('index');
+      const mean = float(0).toVar('mean');
+
+      Loop({ start: uint(0), end: uint(hiddenSize), type: 'uint', condition: '<' }, ({ i }: { i: TslNode }) => {
+        mean.addAssign(inputNode.element(i));
       });
-      storageBarrier();
-      const total = float(0).toVar();
-      each((i) => {
-        total.addAssign(outputNode.element(i));
+
+      mean.divAssign(float(hiddenSize));
+
+      const variance = float(0).toVar('variance');
+
+      Loop({ start: uint(0), end: uint(hiddenSize), type: 'uint', condition: '<' }, ({ i }: { i: TslNode }) => {
+        const delta = inputNode.element(i).sub(mean);
+        variance.addAssign(delta.mul(delta));
       });
-      const mean = workgroupSum(total, lane, workgroupSize).div(float(hiddenSize)).toVar();
-      const squares = float(0).toVar();
-      each((i) => {
-        const d = outputNode.element(i).sub(mean);
-        squares.addAssign(d.mul(d));
-      });
-      const variance = workgroupSum(squares, lane, workgroupSize).div(float(hiddenSize)).toVar();
-      const invStd = inversesqrt(variance.add(epsilon)).toVar();
-      each((i) => {
-        outputNode
-          .element(i)
-          .assign(outputNode.element(i).sub(mean).mul(invStd).mul(weightNode.element(i)).add(biasNode.element(i)));
-      });
+
+      variance.divAssign(float(hiddenSize));
+
+      const value = inputNode
+        .element(index)
+        .sub(mean)
+        .mul(inversesqrt(variance.add(epsilon)))
+        .mul(weightNode.element(index))
+        .add(biasNode.element(index));
+
+      outputNode.element(index).assign(value);
     })()
-      .compute(workgroupSize, [workgroupSize])
+      .compute(hiddenSize, [workgroupSize])
       .setName(name);
   }
 

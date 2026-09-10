@@ -29,3 +29,9 @@ blob-report
 packages/website/public/models/llm/**
 # Large Hugging Face checkpoints used for local model analysis
 models/llm/**
+
+# Local measured review notes
+astra_improvements.md
+
+.vitest-attachments/
+**/__screenshots__/

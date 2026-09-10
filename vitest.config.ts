@@ -37,7 +37,9 @@ export default defineConfig({
           exclude: ['**/*.checkpoint.browser.test.ts'],
           browser: {
             enabled: true,
-            provider: playwright(),
+            provider: playwright({
+              launchOptions: { channel: 'chromium', args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'] },
+            }),
             headless: true,
             instances: [{ browser: 'chromium' }],
           },
@@ -66,7 +68,9 @@ export default defineConfig({
           include: ['packages/three-llm/src/**/*.checkpoint.browser.test.ts'],
           browser: {
             enabled: true,
-            provider: playwright(),
+            provider: playwright({
+              launchOptions: { channel: 'chromium', args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'] },
+            }),
             headless: true,
             instances: [{ browser: 'chromium' }],
           },
@@ -82,6 +86,7 @@ export default defineConfig({
         },
       },
       {
+        resolve: { alias: { '@': path.join(rootDir, 'packages/website/src') } },
         test: {
           name: 'website',
           include: ['packages/website/src/**/*.test.ts'],

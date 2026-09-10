@@ -11,6 +11,7 @@
     "start": "pnpm --filter website start",
     "test": "pnpm test:unit",
     "test:unit": "pnpm tsc && vitest run --project library --project website",
+    "test:performance": "vitest run --config vitest.performance.config.ts",
     "test:browser": "vitest run --project library-browser",
     "test:checkpoints": "vitest run --project checkpoints --project checkpoints-browser",
     "test:e2e": "playwright test",

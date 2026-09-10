@@ -161,6 +161,7 @@ export interface HuggingFaceConfig {
   rotary_dim?: number;
   partial_rotary_factor?: number;
   rope_parameters?: {
+    rope_type?: string;
     rope_theta?: number;
     partial_rotary_factor?: number;
   };
@@ -172,6 +173,10 @@ export interface HuggingFaceConfig {
     beta_fast?: number;
     beta_slow?: number;
     attention_factor?: number;
+    mscale?: number;
+    mscale_all_dim?: number;
+    low_freq_factor?: number;
+    high_freq_factor?: number;
   };
   rope_local_base_freq?: number;
   query_pre_attn_scalar?: number;
@@ -232,7 +237,13 @@ export interface DecoderRecipe {
   stopTokenIds?: number[];
   chatTemplate?: ChatTemplateKind;
   yarn?: YarnRoPEConfig;
+  ropeScaling?: RopeScalingConfig;
 }
+
+export type RopeScalingConfig =
+  | ({ type: 'yarn' } & YarnRoPEConfig)
+  | { type: 'linear'; factor: number }
+  | { type: 'llama3'; factor: number; originalContextLength: number; lowFreqFactor: number; highFreqFactor: number };
 
 export interface YarnRoPEConfig {
   factor: number;
@@ -280,6 +291,7 @@ export interface AttentionKernelOptions extends KernelOptions {
   ropeFreqDim?: number;
   ropePairCount?: number;
   yarn?: YarnRoPEConfig;
+  ropeScaling?: RopeScalingConfig;
   slidingWindow?: number;
   attnScale?: number;
   rmsEpsilon?: number;
@@ -307,6 +319,7 @@ export interface CausalAttentionOptions {
   ropeTheta?: number;
   rotaryDim?: number;
   yarn?: YarnRoPEConfig;
+  ropeScaling?: RopeScalingConfig;
   slidingWindow?: number;
   attnScale?: number;
   qNormWeight?: Float32Array | null;
@@ -319,6 +332,7 @@ export interface DecoderBlock {
   layerType?: string;
   ropeTheta?: number;
   yarn?: YarnRoPEConfig;
+  ropeScaling?: RopeScalingConfig;
   slidingWindow?: number;
   lnWeight?: Float32Array;
   lnBias?: Float32Array | null;
