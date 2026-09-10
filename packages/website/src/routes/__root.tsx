@@ -45,7 +45,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="bg-background text-foreground min-h-svh antialiased">
-        <GoogleAnalytics measurementId={GA_MEASUREMENT_ID} />
+        {import.meta.env.PROD ? <GoogleAnalytics measurementId={GA_MEASUREMENT_ID} /> : null}
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <TooltipProvider>
             {children}

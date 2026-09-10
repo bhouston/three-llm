@@ -11,11 +11,37 @@ export type { Compute, Gpu, StorageBuffer };
 export type { Precision };
 
 /**
+ * Tracks total bytes allocated per `Gpu` across every storage buffer this
+ * module creates (weights, KV caches, activations — everything backed by
+ * `storage()`), so callers can report an approximate total GPU memory
+ * footprint once a model finishes loading. Keyed by `Gpu` (not global) so
+ * multiple runners/tests don't share counts, and a `WeakMap` so it never
+ * outlives the `Gpu` it tracks.
+ */
+const allocatedBytesByGpu = new WeakMap<Gpu, number>();
+
+function trackAllocation(gpu: Gpu, bytes: number): void {
+  allocatedBytesByGpu.set(gpu, (allocatedBytesByGpu.get(gpu) ?? 0) + bytes);
+}
+
+/**
+ * Approximate total bytes of GPU storage allocated so far for `gpu` (weights,
+ * KV caches, and activation buffers). Not exact — it counts allocated buffer
+ * sizes, not driver-level overhead/alignment — but tracks every allocation
+ * this module makes, so it stays close to the real footprint.
+ */
+function gpuMemoryBytes(gpu: Gpu): number {
+  return allocatedBytesByGpu.get(gpu) ?? 0;
+}
+
+/**
  * Allocates a GPU storage buffer sized for `length` 32-bit elements
  * (`f32`, `u32`, or `i32`) and leaves it zero-initialized.
  */
 function allocStorage(gpu: Gpu, length: number, access: 'read' | 'read-write' = 'read-write'): StorageBuffer {
-  return storage(gpu, Math.max(length, 1) * 4, access);
+  const byteSize = Math.max(length, 1) * 4;
+  trackAllocation(gpu, byteSize);
+  return storage(gpu, byteSize, access);
 }
 
 /**
@@ -133,7 +159,9 @@ function uploadWeightStorage(
   const padded = paddedLength === bits.length ? bits : new Uint16Array(paddedLength);
   if (padded !== bits) padded.set(bits);
 
-  const buffer = storage(gpu, Math.max(paddedLength, 2) * 2, access);
+  const byteSize = Math.max(paddedLength, 2) * 2;
+  trackAllocation(gpu, byteSize);
+  const buffer = storage(gpu, byteSize, access);
   writeBuffer(buffer, padded);
   return buffer;
 }
@@ -175,6 +203,7 @@ function workgroupCount(total: number, workgroupSize: number): number {
 export {
   allocStorage,
   float32ToFloat16Bits,
+  gpuMemoryBytes,
   hasShaderF16,
   makeCompute,
   packFloat16,

@@ -96,7 +96,7 @@ export { NormalizeKernel } from './kernels/NormalizeKernel.js';
 export { RMSNormKernel } from './kernels/RMSNormKernel.js';
 export { SiLUMulKernel } from './kernels/SiLUMulKernel.js';
 export { SplitHeadGateKernel } from './kernels/SplitHeadGateKernel.js';
-export { hasShaderF16 } from './gpu/device.js';
+export { gpuMemoryBytes, hasShaderF16 } from './gpu/device.js';
 export { UnigramTokenizer } from './load/UnigramTokenizer.js';
 export type {
   Architecture,

@@ -264,7 +264,9 @@ async function generateAsync(
     if (signal !== undefined && signal.aborted) break;
 
     const computeLogits = needsPromptLogits && i === inputTokens.length - 1;
-    await computeToken(inputTokens[i], i, computeLogits, useGpuSampling ? candidateCount : 0);
+    // sampleToken owns candidate selection. Precomputing here duplicates
+    // those dispatches, including a selection after the final output token.
+    await computeToken(inputTokens[i], i, computeLogits, 0);
     if (computeLogits) logits = useGpuSampling ? null : await readLogits();
     await reportPrefillProgress(i + 1);
   }
@@ -293,7 +295,7 @@ async function generateAsync(
       options.onToken(runner.weights.tokenizer.decode(allTokens), nextToken);
     }
 
-    await computeToken(nextToken, allTokens.length - 1, true, useGpuSampling ? candidateCount : 0);
+    await computeToken(nextToken, allTokens.length - 1, true, 0);
     logits = useGpuSampling ? null : await readLogits();
   }
 

@@ -14,7 +14,7 @@ export function SiteFooter() {
           <span className="sr-only">heart</span>
         </span>
         by
-        <a href="https://ben3d.ca" className="text-foreground underline underline-offset-4">
+        <a href="https://ben3d.ca" className="text-primary underline underline-offset-4">
           Ben Houston
         </a>
         {import.meta.env.DEV ? (

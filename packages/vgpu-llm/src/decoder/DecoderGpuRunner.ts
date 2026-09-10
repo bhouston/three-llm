@@ -1,5 +1,6 @@
 import {
   allocStorage,
+  gpuMemoryBytes,
   makeCompute,
   requireShaderF16,
   uploadWeightStorage,
@@ -69,6 +70,8 @@ class DecoderGpuRunner {
   prefillChunkSize: number;
   hiddenSize: number;
   precision: Precision;
+  /** Approximate total GPU storage bytes allocated for this runner (weights, KV caches, activations). */
+  gpuMemoryBytes: number;
 
   embeddingBuffer: StorageBuffer;
   embeddingScratch: Float32Array;
@@ -183,6 +186,8 @@ class DecoderGpuRunner {
     // shadow copies can be freed immediately.
     this.weights.releaseCheckpointTensors();
     this.weights.releaseUnpackedWeightArrays();
+
+    this.gpuMemoryBytes = gpuMemoryBytes(gpu);
   }
 
   static async fromURL(gpu: Gpu, baseURL: string, options?: LoaderOptions & RunnerOptions) {

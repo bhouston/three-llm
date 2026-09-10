@@ -1,4 +1,4 @@
-import { completionFollowUpText, formatPrompt } from 'vgpu-llm';
+import { completionFollowUpText, formatBytes, formatPrompt } from 'vgpu-llm';
 import {
   catalogWeightClass,
   DEFAULT_MODEL_ID,
@@ -38,6 +38,7 @@ import { Switch } from '@/components/ui/switch';
 
 type GpuRunner = {
   maxTokens: number;
+  gpuMemoryBytes: number;
   generate: (prompt: string, options: GenerateOptions) => Promise<GenerationResult>;
   resetCache: () => void;
   weights: {
@@ -118,7 +119,19 @@ function conversationPrompt(runner: GpuRunner, turns: ChatTurn[], enableThinking
   return formatPrompt(runner.weights, turns, { enableThinking });
 }
 
-export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelChange: (id: string) => void }) {
+type Precision = 'fp32' | 'fp16';
+
+export function ChatApp({
+  modelId,
+  onModelChange,
+  precision,
+  onPrecisionChange,
+}: {
+  modelId?: string;
+  onModelChange: (id: string) => void;
+  precision?: Precision;
+  onPrecisionChange: (precision: Precision) => void;
+}) {
   const ga = useGoogleAnalytics();
   const mobile = isMobileDevice();
   const model = useMemo(() => selectedModel(modelId, mobile), [mobile, modelId]);
@@ -147,6 +160,8 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
   const [noRepeatNgramSize, setNoRepeatNgramSize] = useState(3);
   const [enableThinking, setEnableThinking] = useState(false);
   const [architecture, setArchitecture] = useState<string | null>(null);
+  const activePrecision = precision ?? 'fp32';
+  const [selectedPrecision, setSelectedPrecision] = useState<Precision>(activePrecision);
 
   const supportsThinking = /qwen|deepseek/i.test(`${architecture ?? ''} ${model.id} ${model.name}`);
   const busy = !ready || generating;
@@ -230,7 +245,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         setStatus(`Resolving ${model.name}…`);
         const [{ init: initGpu }, { createGpuRunner }] = await Promise.all([import('vgpu'), import('vgpu-llm')]);
 
-        const gpu = await initGpu();
+        const gpu = await initGpu(activePrecision === 'fp16' ? { requiredFeatures: ['shader-f16'] } : undefined);
         gpuRef.current = gpu;
 
         const modelURL = await resolveModelURL(model);
@@ -240,6 +255,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         const runner = (await createGpuRunner(gpu, modelURL, {
           prefillChunkSize: 4,
           maxTokens: isConstrainedDevice() ? MOBILE_MAX_TOKENS : undefined,
+          precision: activePrecision,
           onProgress: (message) => {
             if (!cancelled) setStatus(message);
           },
@@ -256,7 +272,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
         setContextLimit(runner.maxTokens);
         setMaxNewTokens(defaultMaxNewTokens(runner.maxTokens));
         setReady(true);
-        setStatus(`Ready. Context ${runner.maxTokens} tokens.`);
+        setStatus(`Ready. Context ${runner.maxTokens} tokens. ${formatBytes(runner.gpuMemoryBytes)} GPU memory.`);
         ga.event('model-downloaded', {
           model_name: model.name,
           download_ms: Math.round(performance.now() - downloadStart),
@@ -280,7 +296,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
       gpuRef.current = undefined;
       runnerRef.current = undefined;
     };
-  }, [ga, model]);
+  }, [ga, model, activePrecision]);
 
   useEffect(() => () => clearDraftFlushTimer(), [clearDraftFlushTimer]);
 
@@ -294,7 +310,10 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
     resetAssistantDraft();
     conversationTokensRef.current = undefined;
     runnerRef.current?.resetCache();
-    if (runnerRef.current) setStatus(`Ready. Context ${runnerRef.current.maxTokens} tokens.`);
+    if (runnerRef.current) {
+      const runner = runnerRef.current;
+      setStatus(`Ready. Context ${runner.maxTokens} tokens. ${formatBytes(runner.gpuMemoryBytes)} GPU memory.`);
+    }
   }
 
   function changeModel(nextId: string) {
@@ -541,7 +560,14 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
 
                   <Dialog
                     onOpenChange={(open) => {
-                      if (open) ga.event('settings-open', { model_name: model.name });
+                      if (open) {
+                        ga.event('settings-open', { model_name: model.name });
+                        return;
+                      }
+                      if (selectedPrecision !== activePrecision) {
+                        ga.event('precision-change', { model_name: model.name, precision: selectedPrecision });
+                        onPrecisionChange(selectedPrecision);
+                      }
                     }}
                   >
                     <DialogTrigger
@@ -632,6 +658,29 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                             </FieldDescription>
                           </Field>
                         ) : null}
+                        <Field>
+                          <FieldLabel htmlFor="precision">Weight precision</FieldLabel>
+                          <Select
+                            value={selectedPrecision}
+                            onValueChange={(value) => {
+                              if (value === 'fp32' || value === 'fp16') setSelectedPrecision(value);
+                            }}
+                          >
+                            <SelectTrigger id="precision" size="sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                <SelectItem value="fp32">fp32 (default)</SelectItem>
+                                <SelectItem value="fp16">fp16 (half memory)</SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <FieldDescription>
+                            fp16 halves weight memory but requires GPU shader-f16 support. Changing this reloads the
+                            page.
+                          </FieldDescription>
+                        </Field>
                       </FieldGroup>
                       <DialogFooter showCloseButton />
                     </DialogContent>

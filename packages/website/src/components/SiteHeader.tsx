@@ -21,11 +21,11 @@ export function SiteHeader() {
             <h1 className="font-heading text-base font-medium tracking-tight">vgpu-llm Demo Chat App</h1>
             <p className="text-muted-foreground text-sm text-pretty">
               Built using{' '}
-              <a href="https://github.com/bhouston/vgpu-llm" className="text-foreground underline underline-offset-4">
+              <a href="https://github.com/bhouston/vgpu-llm" className="text-primary underline underline-offset-4">
                 vgpu-llm
               </a>
               , the open-source{' '}
-              <a href="https://github.com/vercel-labs/vgpu" className="text-foreground underline underline-offset-4">
+              <a href="https://github.com/vercel-labs/vgpu" className="text-primary underline underline-offset-4">
                 vgpu
               </a>
               -based modern LLM inference engine that runs in your browser via WebGPU compute.

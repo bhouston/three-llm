@@ -56,6 +56,9 @@ export default defineConfig({
         },
       },
       {
+        resolve: {
+          alias: { '@': path.join(rootDir, 'packages/website/src') },
+        },
         test: {
           name: 'website',
           include: ['packages/website/src/**/*.test.ts'],

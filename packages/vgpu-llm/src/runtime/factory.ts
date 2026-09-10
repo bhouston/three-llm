@@ -4,7 +4,7 @@ import { architectureFor } from '../load/DecoderRecipe.js';
 import { DecoderGpuRunner } from '../decoder/DecoderGpuRunner.js';
 import { DecoderWeights } from '../decoder/DecoderWeights.js';
 import { loadHFModelBundle, normalizeRoot } from '../load/HFModelBundle.js';
-import { createProgress } from '../load/tensors.js';
+import { createProgress, formatBytes } from '../load/tensors.js';
 import { QwenCPURunner } from '../qwen/QwenCPURunner.js';
 import { QwenGpuRunner } from '../qwen/QwenGpuRunner.js';
 import { QwenWeights } from '../qwen/QwenWeights.js';
@@ -38,7 +38,7 @@ async function createGpuRunner(gpu: Gpu, baseURL: string, options: RunnerOptions
       ? new QwenGpuRunner(gpu, weights as InstanceType<typeof QwenWeights>, options)
       : new DecoderGpuRunner(gpu, weights as InstanceType<typeof DecoderWeights>, options);
 
-  await report('GPU runner ready');
+  await report(`GPU runner ready (${formatBytes(runner.gpuMemoryBytes)} GPU memory)`);
   return runner;
 }
 
