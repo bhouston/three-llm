@@ -574,7 +574,7 @@ function sampleTopK(
     noRepeatNgramSize,
   });
 
-  const k = Math.min(topK, logits.length);
+  const k = Math.min(Math.max(1, Math.floor(topK)), logits.length);
   const candidates: LogitCandidate[] = [];
 
   if (temperature <= 0 || k === 1) {

@@ -12,6 +12,7 @@
     "test": "pnpm test:unit",
     "test:unit": "pnpm tsc && vitest run --project library --project website",
     "test:gpu": "vitest run --project library-gpu",
+    "test:browser": "playwright test --config playwright.inference.config.ts",
     "test:checkpoints": "vitest run --project checkpoints --project checkpoints-gpu",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",

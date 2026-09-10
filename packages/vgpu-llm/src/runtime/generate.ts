@@ -257,6 +257,7 @@ async function generateAsync(
 
   if (options.prefillMode !== false && typeof prefillTokens === 'function' && plan.start < prefillEnd) {
     await prefillTokens(inputTokens, plan.start, prefillEnd, reportPrefillProgress);
+    logits = null;
     promptLoopStart = prefillEnd;
   }
 
@@ -267,7 +268,7 @@ async function generateAsync(
     // sampleToken owns candidate selection. Precomputing here duplicates
     // those dispatches, including a selection after the final output token.
     await computeToken(inputTokens[i], i, computeLogits, 0);
-    if (computeLogits) logits = useGpuSampling ? null : await readLogits();
+    logits = computeLogits && !useGpuSampling ? await readLogits() : null;
     await reportPrefillProgress(i + 1);
   }
 
@@ -299,11 +300,18 @@ async function generateAsync(
     logits = useGpuSampling ? null : await readLogits();
   }
 
-  return finishGeneration(runner, runner.weights, allTokens, generatedTokens, logits, {
+  const result = finishGeneration(runner, runner.weights, allTokens, generatedTokens, logits, {
     reused: plan.reused,
     promptTokens: inputTokens.length,
     rest: { aborted: signal !== undefined && signal.aborted },
   });
+  // An interrupted prefill may not have computed allTokens. Force the next
+  // request to reset its physical cache instead of reusing that prefix.
+  if (signal?.aborted) {
+    runner._cacheTokens = [];
+    runner._cacheLogits = null;
+  }
+  return result;
 }
 
 export {

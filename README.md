@@ -110,6 +110,7 @@ pnpm dev            # watch the library and run the demo
 pnpm build          # build every workspace package
 pnpm test           # run type checks and unit tests
 pnpm test:gpu       # run real-GPU kernel/runner tests via vgpu/node (Dawn), no browser needed
+pnpm test:browser   # run FP32 shader correctness and timing probes in Chromium (requires WebGPU)
 pnpm test:checkpoints # run CPU + real-GPU tests against downloaded checkpoints
 pnpm test:e2e       # run Playwright tests
 pnpm lint           # check source with Oxlint
