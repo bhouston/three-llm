@@ -1,7 +1,7 @@
 # three-llm
 
-[![CI](https://github.com/bhouston/three-llm/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/bhouston/three-llm/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/bhouston/three-llm/branch/dev/graph/badge.svg)](https://codecov.io/gh/bhouston/three-llm)
+[![CI](https://github.com/bhouston/three-llm/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bhouston/three-llm/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/bhouston/three-llm/branch/main/graph/badge.svg)](https://codecov.io/gh/bhouston/three-llm)
 
 [![npm version](https://img.shields.io/npm/v/three-llm.svg)](https://www.npmjs.com/package/three-llm)
 [![live demo](https://img.shields.io/badge/demo-three--llm.ben3d.ca-blue)](https://three-llm.ben3d.ca)
