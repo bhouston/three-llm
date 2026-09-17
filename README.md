@@ -1,5 +1,8 @@
 # three-llm
 
+[![CI](https://github.com/bhouston/three-llm/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/bhouston/three-llm/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/bhouston/three-llm/branch/dev/graph/badge.svg)](https://codecov.io/gh/bhouston/three-llm)
+
 [![npm version](https://img.shields.io/npm/v/three-llm.svg)](https://www.npmjs.com/package/three-llm)
 [![live demo](https://img.shields.io/badge/demo-three--llm.ben3d.ca-blue)](https://three-llm.ben3d.ca)
 
@@ -115,3 +118,7 @@ are written under ignored `profile-output/`. Benchmarks run sequentially and
 compare frozen baseline normalization kernels or identical kernels with separate
 submissions. They report device-specific microbenchmarks, not model throughput;
 run them on the target hardware before drawing deployment conclusions.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the issue, branch, PR, and release workflow and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
