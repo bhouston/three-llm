@@ -7,6 +7,14 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
+    coverage: {
+      provider: 'v8',
+      thresholds: { lines: 59, statements: 58, branches: 58, functions: 52 },
+      reporter: ['text', 'lcov', 'json-summary'],
+      reportsDirectory: './coverage',
+      include: ['packages/three-llm/src/**/*.ts'],
+      exclude: ['**/*.test.ts', '**/*.d.ts', '**/index.ts', '**/test/**'],
+    },
     projects: [
       {
         test: {
@@ -14,20 +22,6 @@ export default defineConfig({
           include: ['packages/three-llm/src/**/*.test.ts'],
           exclude: ['**/e2e/**', '**/*.browser.test.ts', '**/*.checkpoint.test.ts'],
           environment: 'node',
-          coverage: {
-            provider: 'v8',
-            reporter: ['text', 'lcov'],
-            reportsDirectory: './coverage',
-            include: ['packages/three-llm/src/**/*.ts'],
-            exclude: [
-              '**/*.test.ts',
-              '**/*.browser.test.ts',
-              '**/*.checkpoint.test.ts',
-              '**/*.d.ts',
-              '**/index.ts',
-              '**/test/**',
-            ],
-          },
         },
       },
       {
