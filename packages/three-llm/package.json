@@ -26,7 +26,8 @@
     "directory": "packages/three-llm"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "type": "module",
   "sideEffects": false,
@@ -41,6 +42,9 @@
       "types": "./dist/catalog.d.ts",
       "default": "./dist/catalog.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc",

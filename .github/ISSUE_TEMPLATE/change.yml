@@ -1,0 +1,29 @@
+name: Change request
+description: Propose a feature, fix, or maintenance change
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What should change?
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this needed?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable outcomes and verification steps
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Compatibility, performance, scope, and other requirements

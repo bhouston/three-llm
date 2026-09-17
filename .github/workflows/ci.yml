@@ -1,6 +1,13 @@
 name: ci
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [dev]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   unit:
@@ -34,7 +41,26 @@ jobs:
         run: pnpm lint
 
       - name: Unit tests
-        run: pnpm test
+        run: pnpm test --coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage
+
+      - name: Coverage badge data
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Bundle size
+        run: pnpm size
+
+      - name: Dependency audit
+        run: pnpm audit --audit-level high
 
   browser-unit:
     name: Browser Unit
@@ -115,5 +141,36 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Build library
+        run: pnpm --filter three-llm build
+
       - name: E2E tests
         run: pnpm test:e2e
+
+  contribution:
+    name: Contribution policy
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate PR and commits
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BASE: ${{ github.base_ref }}
+          PR_HEAD: ${{ github.head_ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node scripts/check-pr.mjs
+          printf '%s\n' "$PR_TITLE" | pnpm exec commitlint
+          pnpm exec commitlint --from "$BASE_SHA" --to "$HEAD_SHA"

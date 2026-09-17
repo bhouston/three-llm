@@ -8,6 +8,13 @@ for (const fixture of reference.cases) {
     const renderer = await createRenderer(() => {
       throw new Error('WebGPU required for reference validation');
     });
+    // SwiftShader's transcendental approximations accumulate across decoder layers.
+    // Measured maxima over every fixture/token: logits 1.80e-4, hidden 7.52e-4.
+    // Keep hardware tolerances unchanged and check greedy decisions on both adapters.
+    const adapter = await navigator.gpu.requestAdapter();
+    const software = adapter?.info.architecture === 'swiftshader';
+    const logitAtol = software ? 2e-4 : 3e-5;
+    const hiddenAtol = software ? 1e-3 : 3e-5;
     try {
       const runner = new DecoderTSLRunner(referenceWeights(fixture.config), {
         maxTokens: 64,
@@ -16,11 +23,13 @@ for (const fixture of reference.cases) {
       });
       for (let i = 0; i < reference.input_ids.length; i++) {
         runner.computeToken(renderer, reference.input_ids[i], i);
-        expectClose(await runner.readLogits(renderer), fixture.logits[i], 3e-5, 2e-4);
+        const logits = await runner.readLogits(renderer);
+        expectClose(logits, fixture.logits[i], logitAtol, 2e-4);
+        expect(argmax(logits)).toBe(argmax(fixture.logits[i]));
         expectClose(
           new Float32Array(await renderer.getArrayBufferAsync(runner.finalNorm.outputAttribute)),
           fixture.final_hidden[i],
-          3e-5,
+          hiddenAtol,
           2e-4,
         );
       }
@@ -28,7 +37,7 @@ for (const fixture of reference.cases) {
       const last = reference.input_ids.length - 1;
       await runner.prefillTokens(renderer, reference.input_ids, 0, last);
       runner.computeToken(renderer, reference.input_ids[last], last);
-      expectClose(await runner.readLogits(renderer), fixture.logits[last], 3e-5, 2e-4);
+      expectClose(await runner.readLogits(renderer), fixture.logits[last], logitAtol, 2e-4);
     } finally {
       renderer.dispose();
     }
@@ -67,4 +76,10 @@ for (const fixture of reference.cases) {
       renderer.dispose();
     }
   });
+}
+
+function argmax(values: ArrayLike<number>) {
+  let best = 0;
+  for (let i = 1; i < values.length; i++) if (values[i] > values[best]) best = i;
+  return best;
 }
