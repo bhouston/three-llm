@@ -32,7 +32,14 @@ export default defineConfig({
           browser: {
             enabled: true,
             provider: playwright({
-              launchOptions: { channel: 'chromium', args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'] },
+              launchOptions: {
+                channel: 'chromium',
+                args: [
+                  '--enable-unsafe-webgpu',
+                  '--ignore-gpu-blocklist',
+                  ...(process.env.WEBGPU_SOFTWARE ? ['--use-webgpu-adapter=swiftshader'] : []),
+                ],
+              },
             }),
             headless: true,
             instances: [{ browser: 'chromium' }],
@@ -63,7 +70,14 @@ export default defineConfig({
           browser: {
             enabled: true,
             provider: playwright({
-              launchOptions: { channel: 'chromium', args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist'] },
+              launchOptions: {
+                channel: 'chromium',
+                args: [
+                  '--enable-unsafe-webgpu',
+                  '--ignore-gpu-blocklist',
+                  ...(process.env.WEBGPU_SOFTWARE ? ['--use-webgpu-adapter=swiftshader'] : []),
+                ],
+              },
             }),
             headless: true,
             instances: [{ browser: 'chromium' }],
