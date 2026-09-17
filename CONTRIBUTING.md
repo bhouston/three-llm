@@ -5,11 +5,11 @@ This is the shared workflow for humans, Claude, Codex, and other agents. Follow 
 ## Issue → branch → pull request
 
 1. Before implementation, open a GitHub issue (or use an existing issue) with a description, motivation, constraints, and acceptance criteria. Use the change-request template. Agents may use `gh issue create --body-file` with these same sections.
-2. Fetch `origin` and branch from `origin/dev`. Name the branch `<type>/<issue>-<short-description>`, for example `feat/42-batch-export`. Never commit directly to `main` or `dev`.
+2. Fetch `origin` and branch from `origin/main`. Name the branch `<type>/<issue>-<short-description>`, for example `feat/42-batch-export`. Never commit directly to `main`.
 3. Implement the acceptance criteria and run the relevant checks below. Keep changes scoped to the issue.
 4. Every commit must follow Conventional Commits: `<type>(<optional-scope>): <description>`. Allowed types are `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `style`, `perf`, `build`, `ci`, and `revert`. Reference the issue in the commit body when useful. Husky runs commitlint at commit time; do not bypass hooks.
-5. Push the branch and open a PR **against `dev`**. Use a Conventional Commit PR title and include `Closes #<issue>` in the body. Describe the resulting behavior and verification. GitHub closes linked issues when merged into the default branch, which is `dev`.
-6. Wait for required checks and review. Squash feature PRs using the validated PR title; preserve any `BREAKING CHANGE:` footer in the squash message. Do not merge without maintainer authorization.
+5. Push the branch and open a PR **against `main`**. Use a Conventional Commit PR title and include `Closes #<issue>` in the body. Describe the resulting behavior and verification. GitHub closes linked issues when merged into the default branch, which is `main`.
+6. Wait for required checks and review. Squash feature PRs using the validated PR title; preserve any `BREAKING CHANGE:` footer in the squash message. Do not merge without maintainer authorization. Merging never publishes; releases are a separate, manually dispatched step (below).
 
 `feat` causes a minor release; `fix` and `perf` cause a patch release. `feat!:` or a `BREAKING CHANGE:` footer causes a major release. Other types do not release by themselves. These rules also apply before 1.0.0. A plain merge commit is ignored by commitlint and the release analyzer.
 
@@ -37,9 +37,15 @@ CI uploads coverage artifacts and sends LCOV to Codecov for the README percentag
 
 ## Controlled releases
 
-Feature merges into `dev` never publish. When ready to release, open a PR from this repository's `dev` to `main`, titled `chore(release): promote dev to main`. **Merge this PR with a merge commit, never squash or rebase**: semantic-release must see the original Conventional Commits. No manual version edits or npm publishing are needed.
+Merging a feature PR into `main` never publishes; it only runs CI. When ready to release, a maintainer manually dispatches the release workflow on `main`:
 
-A push to `main` runs all CI jobs through `release.yml`; publishing waits for them to succeed. The existing demo deployment also runs on `main`. Semantic-release computes the version, generates release notes and a changelog, updates the package version in the CI workspace, publishes `three-llm` with npm OIDC, tags the release, and attaches the npm tarball and `CHANGELOG.md` to the GitHub release. The changelog is also included in the npm package. Generated version/changelog changes are intentionally not committed back: tags and GitHub releases are the release record, avoiding protected-branch bot commits and synchronization merges. The checked-in package version is not the published version authority.
+```sh
+gh workflow run release.yml --ref main
+```
+
+The workflow rejects any dispatch not targeting `refs/heads/main`, then runs the full quality-check suite before releasing. Semantic-release computes the version, generates release notes and a changelog, updates the package version in the CI workspace, publishes `three-llm` with npm OIDC, tags the release, and attaches the npm tarball and `CHANGELOG.md` to the GitHub release. The changelog is also included in the npm package. Generated version/changelog changes are intentionally not committed back: tags and GitHub releases are the release record, avoiding protected-branch bot commits and synchronization merges. The checked-in package version is not the published version authority. If there are no release-worthy commits since the last release, the run is a clean no-op.
+
+Pass `-f dry_run=true` (or use the Actions "Run workflow" UI) to run semantic-release in dry-run mode against `main` without publishing — useful for verifying changelog output without releasing.
 
 There are no `NPM_TOKEN` or `NODE_AUTH_TOKEN` secrets. Keep `id-token: write` on the publishing job and use GitHub-hosted runners. Do not run a local publishing command. `pnpm make-release` performs a semantic-release dry run; full OIDC validation and publication happen only in Actions.
 
@@ -57,7 +63,7 @@ See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/). Config
 
 The initial `v0.5.0` tag must point to npm's published `gitHead`, `d6274946f26ab601d5d728fe7041da79a681c8fc`. Without this baseline, semantic-release would treat this as a first release. Existing nonconventional history is retained; new commits are enforced from PR base to head.
 
-Use `dev` as GitHub's default branch. Protect both `dev` and `main` with PRs, required CI checks, no force pushes, and no deletion. Required checks are Unit, Browser Unit, E2E, and Contribution policy; the release workflow displays nested check names, so choose their exact names from GitHub once the first run completes. Checkpoints are advisory. Keep merge commits enabled for release promotions; squash ordinary feature PRs. GitHub rules must require the checks for failures to actually block merges.
+Use `main` as GitHub's default branch. Protect it with PRs, required CI checks, no force pushes, and no deletion. Required checks are Unit, Browser Unit, E2E, and Contribution policy. Checkpoints are advisory. Squash feature PRs. GitHub rules must require the checks for failures to actually block merges. The release workflow is manually dispatched from `main` and is available in Actions only once merged into the default branch.
 
 ## Reuse in other repositories
 

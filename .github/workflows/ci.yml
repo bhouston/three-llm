@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [dev]
+    branches: [main]
   pull_request:
   workflow_call:
 
@@ -167,7 +167,6 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_BASE: ${{ github.base_ref }}
           PR_HEAD: ${{ github.head_ref }}
-          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |

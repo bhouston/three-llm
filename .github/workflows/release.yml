@@ -1,8 +1,12 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run semantic-release in dry-run mode (no publish, no tag)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -12,7 +16,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require dispatch against main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Release can only be dispatched against refs/heads/main (got ${{ github.ref }})."
+          exit 1
   checks:
+    needs: guard
     uses: ./.github/workflows/ci.yml
     secrets: inherit
   release:
@@ -32,7 +45,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter three-llm build
-      - name: Publish through npm trusted publishing
-        run: pnpm release
+      - name: Release through npm trusted publishing
+        run: pnpm release ${{ inputs.dry_run && '--dry-run' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Release run"
+            echo "- ref: ${{ github.ref }} @ ${{ github.sha }}"
+            echo "- dry run: ${{ inputs.dry_run }}"
+            echo "semantic-release reports directly above whether a release was published or skipped as a no-op."
+          } >> "$GITHUB_STEP_SUMMARY"
