@@ -5,7 +5,7 @@ publish
 coverage
 *.lcov
 profile-output
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
