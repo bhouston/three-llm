@@ -12,59 +12,7 @@ Run large language models in the browser with WebGPU. `three-llm` implements tra
 
 <img src="three-llm-chat.webp" alt="Demo App Interface" width="500" />
 
-## Features
-
-- WebGPU inference through Three.js TSL compute shaders
-- CPU reference runners for testing and validation
-- Prompt caching, chunked prefill, streaming token callbacks, and GPU sampling
-- GPT-2, Llama-style, Gemma 3, Phi, and Qwen 3.5 decoder architectures
-- GPT-2 BPE, Qwen BPE, and unigram tokenizers
-- Chat prompt formatting via `formatPrompt`
-- Direct loading of Hugging Face SafeTensors checkpoints
-
-## Requirements
-
-- A browser with WebGPU support, such as a recent Chrome, Edge, or Safari release
-- Enough device memory for the selected model and its intermediate buffers
-
-Model files can range from a few megabytes to several gigabytes. Remote Hugging Face repositories must allow browser CORS requests.
-
-## Install
-
-```sh
-pnpm add three-llm three
-```
-
-## Usage
-
-Create a Three.js WebGPU renderer, load a compatible Hugging Face checkpoint, and generate text:
-
-```ts
-import { createTSLRunner } from 'three-llm';
-import { WebGPURenderer } from 'three/webgpu';
-
-const renderer = new WebGPURenderer();
-await renderer.init();
-
-const runner = await createTSLRunner('https://huggingface.co/HuggingFaceTB/SmolLM2-135M/resolve/main/', {
-  onProgress: console.log,
-  prefillChunkSize: 4,
-});
-
-const result = await runner.generate(renderer, 'Once upon a time,', {
-  maxNewTokens: 64,
-  temperature: 0.7,
-  topK: 10,
-  onToken: (text) => {
-    // Append each decoded token to your UI.
-    console.log(text);
-  },
-});
-
-console.log(result.generatedText);
-```
-
-For multi-turn chat, pass formatted messages with `formatPrompt` from `three-llm`. For catalog entries and URL resolution, import `MODEL_CATALOG` and `resolveModelURL` from `three-llm/catalog`.
+See [packages/three-llm/README.md](packages/three-llm/README.md) for full documentation, including features, requirements, install, and usage.
 
 ## Run the demo locally
 
@@ -99,25 +47,6 @@ pnpm format         # format the repository with Oxfmt
 ## License
 
 [MIT](LICENSE) © 2026 Ben Houston
-
-## Inference validation
-
-`pnpm test:unit` checks CPU inference, recipe validation, and fixture integrity.
-`pnpm test:browser` executes TSL kernels in Playwright's full Chromium headless
-mode with WebGPU enabled. The independent reference tests require a working
-WebGPU adapter and fail if one is unavailable.
-
-Pinned Transformers fixtures cover default, linear, YaRN, and Llama 3 RoPE,
-including tokenwise logits and chunked prefill. Unsupported scaling types are
-rejected instead of silently ignored. See [fixture generation](scripts/reference/README.md).
-
-Run `pnpm test:performance`, then
-`python3 scripts/summarize-inference-benchmarks.py` for paired normalization and
-submission measurements. Raw samples, adapter metadata, and bootstrap summaries
-are written under ignored `profile-output/`. Benchmarks run sequentially and
-compare frozen baseline normalization kernels or identical kernels with separate
-submissions. They report device-specific microbenchmarks, not model throughput;
-run them on the target hardware before drawing deployment conclusions.
 
 ## Contributing and security
 
