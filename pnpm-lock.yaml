@@ -10,7 +10,7 @@ importers:
     devDependencies:
       '@anolilab/semantic-release-pnpm':
         specifier: ^8.1.25
-        version: 8.1.25(json5@2.2.3)(supports-color@10.2.2)(yaml@2.9.0)
+        version: 8.1.25(@visulima/yaml@1.0.0)(json5@2.2.3)(supports-color@10.2.2)(yaml@2.9.0)
       '@commitlint/cli':
         specifier: ^21.2.2
         version: 21.2.2(@types/node@22.20.1)(conventional-commits-parser@7.1.2)(typescript@7.0.2)
@@ -29,6 +29,9 @@ importers:
       '@types/node':
         specifier: ^22.20.0
         version: 22.20.1
+      '@visulima/yaml':
+        specifier: 1.0.0
+        version: 1.0.0
       '@vitest/browser-playwright':
         specifier: ^4.1.9
         version: 4.1.11(playwright@1.62.1)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(yaml@2.9.0))(vitest@4.1.11)
@@ -2206,6 +2209,10 @@ packages:
     resolution: {integrity: sha512-M9cTzZNtTbOl975YAgUzzzwg9xOMqqC2Y2Jy1uFDQufK0sBNgbFnvR0o14jIfNDxACXyhEN3DSuFa4W7U7Hf2g==}
     engines: {node: ^22.14.0 || >=24.10.0}
     os: [darwin, linux, win32]
+
+  '@visulima/yaml@1.0.0':
+    resolution: {integrity: sha512-06obI/5zlKRjScekXqHTtF06S5peqHE9J3AmEthJ5b40a4FuJAysbOJ9EVyznTpOVmy3IvL8cZu3QiNpgF/cbg==}
+    engines: {node: ^22.14.0 || >=24.10.0}
 
   '@vitejs/plugin-react@5.2.0':
     resolution: {integrity: sha512-YmKkfhOAi3wsB1PhJq5Scj3GXMn3WvtQ/JC0xoopuHoXSdmtdStOpFrYaT1kie2YgFBcIe64ROzMYRjCrYOdYw==}
@@ -6145,13 +6152,13 @@ snapshots:
       ini: 7.0.0
       ts-deepmerge: 8.0.0
 
-  '@anolilab/semantic-release-pnpm@8.1.25(json5@2.2.3)(supports-color@10.2.2)(yaml@2.9.0)':
+  '@anolilab/semantic-release-pnpm@8.1.25(@visulima/yaml@1.0.0)(json5@2.2.3)(supports-color@10.2.2)(yaml@2.9.0)':
     dependencies:
       '@actions/core': 3.0.1
       '@anolilab/rc': 4.0.9
       '@semantic-release/error': 4.0.0
       '@visulima/fs': 5.1.0(ini@7.0.0)(json5@2.2.3)(yaml@2.9.0)
-      '@visulima/package': 5.0.21(ini@7.0.0)
+      '@visulima/package': 5.0.21(@visulima/yaml@1.0.0)(ini@7.0.0)
       '@visulima/path': 3.1.0
       debug: 4.4.3(supports-color@10.2.2)
       detect-indent: 7.0.2
@@ -8054,17 +8061,18 @@ snapshots:
       json5: 2.2.3
       yaml: 2.9.0
 
-  '@visulima/fs@6.0.8(ini@7.0.0)(json5@2.2.3)':
+  '@visulima/fs@6.0.8(@visulima/yaml@1.0.0)(ini@7.0.0)(json5@2.2.3)':
     dependencies:
       '@visulima/path': 4.0.0
     optionalDependencies:
+      '@visulima/yaml': 1.0.0
       ini: 7.0.0
       json5: 2.2.3
 
-  '@visulima/package@5.0.21(ini@7.0.0)':
+  '@visulima/package@5.0.21(@visulima/yaml@1.0.0)(ini@7.0.0)':
     dependencies:
       '@antfu/install-pkg': 2.1.0
-      '@visulima/fs': 6.0.8(ini@7.0.0)(json5@2.2.3)
+      '@visulima/fs': 6.0.8(@visulima/yaml@1.0.0)(ini@7.0.0)(json5@2.2.3)
       '@visulima/path': 4.0.0
       json5: 2.2.3
       normalize-package-data: 9.0.0
@@ -8078,6 +8086,8 @@ snapshots:
   '@visulima/path@3.1.0': {}
 
   '@visulima/path@4.0.0': {}
+
+  '@visulima/yaml@1.0.0': {}
 
   '@vitejs/plugin-react@5.2.0(supports-color@10.2.2)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(yaml@2.9.0))':
     dependencies:
