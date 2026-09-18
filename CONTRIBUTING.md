@@ -9,7 +9,7 @@ This is the shared workflow for humans, Claude, Codex, and other agents. Follow 
 3. Implement the acceptance criteria and run the relevant checks below. Keep changes scoped to the issue.
 4. Every commit must follow Conventional Commits: `<type>(<optional-scope>): <description>`. Allowed types are `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `style`, `perf`, `build`, `ci`, and `revert`. Reference the issue in the commit body when useful. Husky runs commitlint at commit time; do not bypass hooks.
 5. Push the branch and open a PR **against `main`**. Use a Conventional Commit PR title and include `Closes #<issue>` in the body. Describe the resulting behavior and verification. GitHub closes linked issues when merged into the default branch, which is `main`.
-6. Wait for required checks and review. Squash feature PRs using the validated PR title; preserve any `BREAKING CHANGE:` footer in the squash message. Do not merge without maintainer authorization. Merging never publishes; releases are a separate, manually dispatched step (below).
+6. Wait for required checks and review. PRs are merged with merge commits; do not squash or rebase-merge. Any `BREAKING CHANGE:` footer must be in a commit body. Do not merge without maintainer authorization. Merging never publishes; releases are a separate, manually dispatched step (below).
 
 `feat` causes a minor release; `fix` and `perf` cause a patch release. `feat!:` or a `BREAKING CHANGE:` footer causes a major release. Other types do not release by themselves. These rules also apply before 1.0.0. A plain merge commit is ignored by commitlint and the release analyzer.
 
@@ -63,7 +63,7 @@ See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/). Config
 
 The initial `v0.5.0` tag must point to npm's published `gitHead`, `d6274946f26ab601d5d728fe7041da79a681c8fc`. Without this baseline, semantic-release would treat this as a first release. Existing nonconventional history is retained; new commits are enforced from PR base to head.
 
-Use `main` as GitHub's default branch. Protect it with PRs, required CI checks, no force pushes, and no deletion. Required checks are Unit, Browser Unit, E2E, and Contribution policy. Checkpoints are advisory. Squash feature PRs. GitHub rules must require the checks for failures to actually block merges. The release workflow is manually dispatched from `main` and is available in Actions only once merged into the default branch.
+Use `main` as GitHub's default branch. Protect it with PRs, required CI checks, no force pushes, and no deletion. Required checks are Unit, Browser Unit, E2E, and Contribution policy. Checkpoints are advisory. Merge PRs with merge commits; squash merging is disabled. GitHub rules must require the checks for failures to actually block merges. The release workflow is manually dispatched from `main` and is available in Actions only once merged into the default branch.
 
 ## Reuse in other repositories
 
