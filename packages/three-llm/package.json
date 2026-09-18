@@ -48,6 +48,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "tsc": "tsc --noEmit",
     "dev": "tsc -w --preserveWatchOutput --noEmitOnError",
     "test": "vitest run"
   },

@@ -1,11 +1,9 @@
 {
   "extends": "../../tsconfig.node.json",
   "compilerOptions": {
-    "composite": true,
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "noUncheckedIndexedAccess": false
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.browser.test.ts", "src/**/*.checkpoint.test.ts", "src/test/**"],
-  "references": []
+  "exclude": ["src/**/*.test.ts", "src/**/*.browser.test.ts", "src/**/*.checkpoint.test.ts", "src/test/**"]
 }

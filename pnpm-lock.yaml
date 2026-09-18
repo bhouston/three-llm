@@ -63,7 +63,7 @@ importers:
         specifier: ^14.0.0
         version: 14.0.0
       typescript:
-        specifier: ^7
+        specifier: ^7.0.2
         version: 7.0.2
       vite:
         specifier: ^8.1.3
