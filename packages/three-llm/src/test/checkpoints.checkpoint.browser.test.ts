@@ -55,23 +55,33 @@ describe('checkpoint browser GPU tests', () => {
     await withRenderer(skip, (renderer) => expectDecoderGpuMatchesCpu(skip, renderer, 'smollm2', 32));
   }, 180_000);
 
-  it('TSL Phi-1.5 greedy continuation matches the CPU runner', async ({ skip }) => {
-    await withRenderer(skip, (renderer) => expectDecoderGpuMatchesCpu(skip, renderer, 'phi-1.5', 32));
-  }, 300_000);
+  // Phi-1.5 (2.8 GB) and Qwen3.5 0.8B (1.7 GB) are too large to reliably download within
+  // CI time budgets; no smaller checkpoint exists for either architecture. Run locally only.
+  it.skipIf(import.meta.env.CI)(
+    'TSL Phi-1.5 greedy continuation matches the CPU runner',
+    async ({ skip }) => {
+      await withRenderer(skip, (renderer) => expectDecoderGpuMatchesCpu(skip, renderer, 'phi-1.5', 32));
+    },
+    300_000,
+  );
 
-  it('TSL Qwen3.5 0.8B greedy continuation matches the CPU runner', async ({ skip }) => {
-    await withRenderer(skip, async (renderer) => {
-      const weights = await loadLocalCheckpoint(
-        skip,
-        QwenWeights,
-        checkpointRoot(catalogEntry('qwen3.5-0.8b'), 'browser'),
-      );
-      const cpu = new QwenCPURunner(weights, { maxTokens: 32 }).generate(STORY_PROMPT, GREEDY_SHORT);
-      const gpu = await new QwenTSLRunner(weights, { maxTokens: 32 }).generate(renderer, STORY_PROMPT, GREEDY_SHORT);
+  it.skipIf(import.meta.env.CI)(
+    'TSL Qwen3.5 0.8B greedy continuation matches the CPU runner',
+    async ({ skip }) => {
+      await withRenderer(skip, async (renderer) => {
+        const weights = await loadLocalCheckpoint(
+          skip,
+          QwenWeights,
+          checkpointRoot(catalogEntry('qwen3.5-0.8b'), 'browser'),
+        );
+        const cpu = new QwenCPURunner(weights, { maxTokens: 32 }).generate(STORY_PROMPT, GREEDY_SHORT);
+        const gpu = await new QwenTSLRunner(weights, { maxTokens: 32 }).generate(renderer, STORY_PROMPT, GREEDY_SHORT);
 
-      expect(cpu.text.startsWith(STORY_PROMPT)).toBe(true);
-      expect(gpu.text).toBe(cpu.text);
-      expect(gpu.generatedTokens).toEqual(cpu.generatedTokens);
-    });
-  }, 300_000);
+        expect(cpu.text.startsWith(STORY_PROMPT)).toBe(true);
+        expect(gpu.text).toBe(cpu.text);
+        expect(gpu.generatedTokens).toEqual(cpu.generatedTokens);
+      });
+    },
+    300_000,
+  );
 });
