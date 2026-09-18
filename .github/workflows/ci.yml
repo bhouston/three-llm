@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
   workflow_call:
 
 permissions:
