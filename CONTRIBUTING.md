@@ -5,7 +5,7 @@ This is the shared workflow for humans, Claude, Codex, and other agents. Follow 
 ## Issue → branch → pull request
 
 1. Before implementation, open a GitHub issue (or use an existing issue) with a description, motivation, constraints, and acceptance criteria. Use the change-request template. Agents may use `gh issue create --body-file` with these same sections.
-2. Fetch `origin` and branch from `origin/main`. Name the branch `<type>/<issue>-<short-description>`, for example `feat/42-batch-export`. Never commit directly to `main`.
+2. Fetch `origin` and branch from `origin/main`. Branch names are not enforced; pick anything descriptive. Never commit directly to `main`.
 3. Implement the acceptance criteria and run the relevant checks below. Keep changes scoped to the issue.
 4. Every commit must follow Conventional Commits: `<type>(<optional-scope>): <description>`. Allowed types are `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `style`, `perf`, `build`, `ci`, and `revert`. Reference the issue in the commit body when useful. Husky runs commitlint at commit time; do not bypass hooks.
 5. Push the branch and open a PR **against `main`**. Use a Conventional Commit PR title and include `Closes #<issue>` in the body. Describe the resulting behavior and verification. GitHub closes linked issues when merged into the default branch, which is `main`.
