@@ -5,8 +5,7 @@ export default {
     ['@semantic-release/commit-analyzer', { preset: 'conventionalcommits' }],
     ['@semantic-release/release-notes-generator', { preset: 'conventionalcommits' }],
     ['@semantic-release/changelog', { changelogFile: 'packages/three-llm/CHANGELOG.md' }],
-    './scripts/release-assets.mjs',
-    ['@semantic-release/npm', { pkgRoot: 'packages/three-llm', tarballDir: 'release-artifacts' }],
+    ['@anolilab/semantic-release-pnpm', { pkgRoot: 'packages/three-llm', tarballDir: 'release-artifacts' }],
     [
       '@semantic-release/github',
       {
