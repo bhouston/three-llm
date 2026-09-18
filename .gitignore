@@ -13,7 +13,6 @@ profile-output
 *.log
 *.buildinfo
 .idea
-.vscode
 # Demo / Nitro
 .output
 .nitro
