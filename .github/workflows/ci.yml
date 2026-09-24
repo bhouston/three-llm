@@ -34,6 +34,14 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Verify published package includes dist
+        run: |
+          cd packages/three-llm
+          pnpm pack --dry-run | grep -qx 'dist/index.js' || {
+            echo "::error::dist/index.js missing from the packed tarball; the publish step would ship a broken package."
+            exit 1
+          }
+
       - name: Type check
         run: pnpm tsc
 
