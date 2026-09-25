@@ -3,6 +3,7 @@ import { Node } from 'three/webgpu';
 import { it } from 'vitest';
 
 import { createRenderer } from './gpu.js';
+import type { Renderer, TslNode } from '../types.js';
 
 const SWIZZLE = ['x', 'y', 'z', 'w'] as const;
 const MAX_COLUMNS = 4;
@@ -24,14 +25,14 @@ const MATRIX_LAYOUT: Record<string, { columns: number; columnLength: number }> =
   mat4: { columns: 4, columnLength: 4 },
 };
 
-function toVec4(value: any, count: number) {
+function toVec4(value: TslNode, count: number) {
   if (count === 4) return value;
   return vec4(
     ...Array.from({ length: 4 }, (_, i) => (i < count ? float(count === 1 ? value : value[SWIZZLE[i]!]) : float(0))),
   );
 }
 
-function resolveLayout(type: string, builder: any) {
+function resolveLayout(type: string, builder: TslNode) {
   const matrixLayout = MATRIX_LAYOUT[type];
   if (matrixLayout !== undefined) return { ...matrixLayout, isMatrix: true };
 
@@ -44,9 +45,9 @@ function resolveLayout(type: string, builder: any) {
 }
 
 class AssertWriteNode extends Node {
-  writeColumn: (columnIndex: number, actualVec4: any, expectedVec4: any) => void;
-  value1: any;
-  value2: any;
+  writeColumn: (columnIndex: number, actualVec4: TslNode, expectedVec4: TslNode) => void;
+  value1: TslNode;
+  value2: TslNode;
   kind: KindValue = Kind.EQ;
   tolerance = 0;
   message?: string;
@@ -56,9 +57,9 @@ class AssertWriteNode extends Node {
   resolvedColumnLength = 1;
 
   constructor(
-    writeColumn: (columnIndex: number, actualVec4: any, expectedVec4: any) => void,
-    value1: any,
-    value2: any,
+    writeColumn: (columnIndex: number, actualVec4: TslNode, expectedVec4: TslNode) => void,
+    value1: TslNode,
+    value2: TslNode,
   ) {
     super('void');
     this.writeColumn = writeColumn;
@@ -66,7 +67,7 @@ class AssertWriteNode extends Node {
     this.value2 = value2;
   }
 
-  setup(builder: any) {
+  setup(builder: TslNode) {
     const type1 = this.value1.getNodeType(builder);
     const type2 = this.value2.getNodeType(builder);
 
@@ -150,23 +151,25 @@ function evaluateAssertion(
 }
 
 function buildAssertAPI(
-  makeNode: (kind: KindValue, tolerance: number, message?: string) => (value1: any, value2: any) => void,
+  makeNode: (kind: KindValue, tolerance: number, message?: string) => (value1: TslNode, value2: TslNode) => void,
 ) {
   return {
-    eq: (actual: any, expected: any, message?: string) => makeNode(Kind.EQ, 0, message)(actual, expected),
-    closeAbs: (actual: any, expected: any, tolerance: number, message?: string) =>
+    eq: (actual: TslNode, expected: TslNode, message?: string) => makeNode(Kind.EQ, 0, message)(actual, expected),
+    closeAbs: (actual: TslNode, expected: TslNode, tolerance: number, message?: string) =>
       makeNode(Kind.CLOSE_ABS, tolerance, message)(actual, expected),
-    closeRel: (actual: any, expected: any, tolerance: number, message?: string) =>
+    closeRel: (actual: TslNode, expected: TslNode, tolerance: number, message?: string) =>
       makeNode(Kind.CLOSE_REL, tolerance, message)(actual, expected),
-    greaterThan: (actual: any, expected: any, message?: string) => makeNode(Kind.GT, 0, message)(actual, expected),
-    greaterThanOrEqual: (actual: any, expected: any, message?: string) =>
+    greaterThan: (actual: TslNode, expected: TslNode, message?: string) =>
+      makeNode(Kind.GT, 0, message)(actual, expected),
+    greaterThanOrEqual: (actual: TslNode, expected: TslNode, message?: string) =>
       makeNode(Kind.GE, 0, message)(actual, expected),
-    lessThan: (actual: any, expected: any, message?: string) => makeNode(Kind.LT, 0, message)(actual, expected),
-    lessThanOrEqual: (actual: any, expected: any, message?: string) => makeNode(Kind.LE, 0, message)(actual, expected),
+    lessThan: (actual: TslNode, expected: TslNode, message?: string) => makeNode(Kind.LT, 0, message)(actual, expected),
+    lessThanOrEqual: (actual: TslNode, expected: TslNode, message?: string) =>
+      makeNode(Kind.LE, 0, message)(actual, expected),
   };
 }
 
-async function readBuffer(renderer: any, buffer: any) {
+async function readBuffer(renderer: Renderer, buffer: TslNode) {
   return new Float32Array(await renderer.getArrayBufferAsync(buffer.value));
 }
 
@@ -174,7 +177,7 @@ function randomCanaryValue() {
   return 1000 + Math.floor(Math.random() * 9000);
 }
 
-function writeCanary(buffer: any, row: number, canaryValue: number) {
+function writeCanary(buffer: TslNode, row: number, canaryValue: number) {
   If(instanceIndex.equal(row), () => {
     buffer.element(instanceIndex).assign(vec4(canaryValue, 0, 0, 0));
   });
@@ -208,13 +211,13 @@ export function gpuTest(
       nodes.length = 0;
       writeCanary(actualBuffer, canaryRow, canaryValue);
 
-      const makeNode = (kind: KindValue, tolerance: number, message?: string) => (value1: any, value2: any) => {
+      const makeNode = (kind: KindValue, tolerance: number, message?: string) => (value1: TslNode, value2: TslNode) => {
         if (nodes.length >= maxUsableAssertions) {
           throw new Error(`gpuTest "${name}": exceeded maxAssertions (${maxAssertions}).`);
         }
 
         const baseRow = nodes.length * MAX_COLUMNS;
-        const writeColumn = (c: number, actualVec4: any, expectedVec4: any) => {
+        const writeColumn = (c: number, actualVec4: TslNode, expectedVec4: TslNode) => {
           If(instanceIndex.equal(baseRow + c), () => {
             actualBuffer.element(instanceIndex).assign(actualVec4);
             expectedBuffer.element(instanceIndex).assign(expectedVec4);
@@ -262,14 +265,14 @@ export function gpuTest(
 export function gpuFuzzTest(
   name: string,
   count: number,
-  buildFn: (context: { instanceIndex: any; assert: ReturnType<typeof buildAssertAPI> }) => void,
+  buildFn: (context: { instanceIndex: TslNode; assert: ReturnType<typeof buildAssertAPI> }) => void,
   { maxSitesPerInstance = 4, maxColumnsPerSite = 1 } = {},
 ) {
   it(name, async ({ skip }) => {
     const renderer = await createRenderer(skip);
     const nodes: AssertWriteNode[] = [];
-    const actualBuffers: any[][] = [];
-    const expectedBuffers: any[][] = [];
+    const actualBuffers: TslNode[][] = [];
+    const expectedBuffers: TslNode[][] = [];
     const canaryRow = count - 1;
     const maxUsableCount = count - 1;
     const canaryValue = randomCanaryValue();
@@ -282,13 +285,13 @@ export function gpuFuzzTest(
     const kernel = Fn(() => {
       writeCanary(actualBuffers[0]![0], canaryRow, canaryValue);
 
-      const makeNode = (kind: KindValue, tolerance: number, message?: string) => (value1: any, value2: any) => {
+      const makeNode = (kind: KindValue, tolerance: number, message?: string) => (value1: TslNode, value2: TslNode) => {
         const site = nodes.length;
         if (site >= maxSitesPerInstance) {
           throw new Error(`gpuFuzzTest "${name}": exceeded maxSitesPerInstance (${maxSitesPerInstance}).`);
         }
 
-        const writeColumn = (c: number, actualVec4: any, expectedVec4: any) => {
+        const writeColumn = (c: number, actualVec4: TslNode, expectedVec4: TslNode) => {
           if (c >= maxColumnsPerSite) {
             throw new Error(
               `gpuFuzzTest "${name}": value at site ${site} needs more than ${maxColumnsPerSite} columns.`,

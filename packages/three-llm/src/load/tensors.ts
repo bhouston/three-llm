@@ -387,7 +387,7 @@ async function fetchResource(
   });
 }
 
-async function fetchJSON<T = any>(url: string, label = 'LLM', onProgress?: ProgressCallback): Promise<T> {
+async function fetchJSON<T = unknown>(url: string, label = 'LLM', onProgress?: ProgressCallback): Promise<T> {
   return retryOperation(url, label, onProgress, async () => {
     const response = await fetchResponseOnce(url);
 
