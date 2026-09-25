@@ -73,6 +73,8 @@ jobs:
   browser-unit:
     name: Browser Unit
     runs-on: ubuntu-latest
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -88,11 +90,11 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
 
+      - name: Install Vulkan software rendering (lavapipe)
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgles2 libgl1-mesa-dri mesa-vulkan-drivers
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
 
       - name: Browser unit tests
         run: pnpm test:browser
@@ -101,6 +103,8 @@ jobs:
     name: Checkpoints
     runs-on: ubuntu-latest
     continue-on-error: true
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -116,11 +120,11 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
 
+      - name: Install Vulkan software rendering (lavapipe)
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgles2 libgl1-mesa-dri mesa-vulkan-drivers
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
 
       - name: Checkpoint tests
         run: pnpm test:checkpoints

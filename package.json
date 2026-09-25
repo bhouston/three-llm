@@ -12,8 +12,8 @@
     "test": "pnpm test:unit",
     "test:unit": "pnpm tsc && vitest run --project library --project website",
     "test:performance": "vitest run --config vitest.performance.config.ts",
-    "test:browser": "vitest run --project library-browser",
-    "test:checkpoints": "vitest run --project checkpoints --project checkpoints-browser",
+    "test:browser": "vitest run --project library-webgpu-node",
+    "test:checkpoints": "vitest run --project checkpoints --project checkpoints-webgpu-node",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:all": "pnpm test && pnpm test:e2e",
@@ -48,7 +48,8 @@
     "size-limit": "^14.0.0",
     "typescript": "^7",
     "vite": "^8.1.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vitest-environment-webgpu-node": "^2.0.0"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs}": [
