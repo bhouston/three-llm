@@ -8,32 +8,28 @@ import type { KernelOptions, Renderer, TslNode } from '../types.js';
  *
  */
 class TSLMul {
+  outputAttribute: StorageBufferAttribute;
+  outputNode: TslNode;
+  computeNode: TslNode;
 
-	outputAttribute: StorageBufferAttribute;
-	outputNode: TslNode;
-	computeNode: TslNode;
+  constructor(aNode: TslNode, bNode: TslNode, size: number, options: KernelOptions = {}) {
+    this.outputAttribute = new StorageBufferAttribute(new Float32Array(size), 1);
+    this.outputNode = storage(this.outputAttribute, 'float', size).setName(
+      options.name ? `${options.name}Output` : 'LLMMulOutput',
+    );
 
-	constructor( aNode: TslNode, bNode: TslNode, size: number, options: KernelOptions = {} ) {
+    this.computeNode = Fn(() => {
+      this.outputNode.element(instanceIndex).assign(aNode.element(instanceIndex).mul(bNode.element(instanceIndex)));
+    })()
+      .compute(size, [options.workgroupSize || 64])
+      .setName(options.name || 'LLMMul');
+  }
 
-		this.outputAttribute = new StorageBufferAttribute( new Float32Array( size ), 1 );
-		this.outputNode = storage( this.outputAttribute, 'float', size ).setName( options.name ? `${ options.name }Output` : 'LLMMulOutput' );
+  compute(renderer: Renderer) {
+    renderer.compute(this.computeNode);
 
-		this.computeNode = Fn( () => {
-
-			this.outputNode.element( instanceIndex ).assign( aNode.element( instanceIndex ).mul( bNode.element( instanceIndex ) ) );
-
-		} )().compute( size, [ options.workgroupSize || 64 ] ).setName( options.name || 'LLMMul' );
-
-	}
-
-	compute( renderer: Renderer ) {
-
-		renderer.compute( this.computeNode );
-
-		return this.outputNode;
-
-	}
-
+    return this.outputNode;
+  }
 }
 
 export { TSLMul };

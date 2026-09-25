@@ -20,13 +20,14 @@ interface DownloadProgressOptions {
 }
 
 class SafeTensorsLoader {
-  async load(
-    url: string,
-    options: LoaderOptions = {},
-    downloadProgress?: DownloadProgressOptions,
-    expectedLength = 0,
-  ) {
-    const buffer = await fetchArrayBuffer(url, 'SafeTensorsLoader', options.onProgress, downloadProgress, expectedLength);
+  async load(url: string, options: LoaderOptions = {}, downloadProgress?: DownloadProgressOptions, expectedLength = 0) {
+    const buffer = await fetchArrayBuffer(
+      url,
+      'SafeTensorsLoader',
+      options.onProgress,
+      downloadProgress,
+      expectedLength,
+    );
     return this.parse(buffer, options);
   }
 
@@ -222,7 +223,10 @@ function parseModelDetailsFiles(details: ModelDetailsResponse): SafeTensorFileIn
   return files.length > 0 ? files : undefined;
 }
 
-async function resolveSafetensorFilesFromIndex(root: string, options: LoaderOptions = {}): Promise<SafeTensorFileInfo[]> {
+async function resolveSafetensorFilesFromIndex(
+  root: string,
+  options: LoaderOptions = {},
+): Promise<SafeTensorFileInfo[]> {
   try {
     const singleResponse = await fetchResource(`${root}model.safetensors`, { method: 'HEAD' });
     if (singleResponse.ok) {

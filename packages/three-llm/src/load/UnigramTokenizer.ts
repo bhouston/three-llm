@@ -119,8 +119,10 @@ class UnigramTokenizer implements Tokenizer {
       this.addedTokenIds.set(addedToken.content, addedToken.id);
       if (this.useBpe === false) insertTrie(this.trie, addedToken.content, addedToken.id);
 
-      if (this.bosTokenId === undefined && addedToken.special && addedToken.content.includes('bos')) this.bosTokenId = addedToken.id;
-      if (this.eosTokenId === undefined && addedToken.special && addedToken.content.includes('eos')) this.eosTokenId = addedToken.id;
+      if (this.bosTokenId === undefined && addedToken.special && addedToken.content.includes('bos'))
+        this.bosTokenId = addedToken.id;
+      if (this.eosTokenId === undefined && addedToken.special && addedToken.content.includes('eos'))
+        this.eosTokenId = addedToken.id;
     }
 
     if (this.addedTokenIds.size > 0) {

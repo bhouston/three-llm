@@ -34,8 +34,7 @@ const localCheckpoints = new Map<string, Promise<unknown> | null>();
 
 export function catalogEntry(id: string): ModelCatalogEntry {
   const entry =
-    MODEL_CATALOG.find((candidate) => candidate.id === id) ??
-    TEST_CHECKPOINTS.find((candidate) => candidate.id === id);
+    MODEL_CATALOG.find((candidate) => candidate.id === id) ?? TEST_CHECKPOINTS.find((candidate) => candidate.id === id);
   if (!entry) throw new Error(`Missing catalog entry "${id}"`);
   return entry;
 }

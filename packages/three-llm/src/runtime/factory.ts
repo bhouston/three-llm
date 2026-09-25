@@ -22,14 +22,16 @@ async function loadWeights(baseURL: string, options: LoaderOptions = {}) {
     return DecoderWeights.fromBundle(bundle, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`LLMFactory: failed to load "${normalizeRoot(baseURL)}": ${message}`);
+    throw new Error(`LLMFactory: failed to load "${normalizeRoot(baseURL)}": ${message}`, { cause: error });
   }
 }
 
 async function createTSLRunner(baseURL: string, options: RunnerOptions = {}) {
   const report = createProgress('LLMFactory', options.onProgress);
   const weights = await loadWeights(baseURL, options);
-  await report(`Building ${weights.architecture} GPU runner (${weights.layerCount} layers, vocab ${weights.vocabSize})...`);
+  await report(
+    `Building ${weights.architecture} GPU runner (${weights.layerCount} layers, vocab ${weights.vocabSize})...`,
+  );
 
   const runner =
     weights.recipe.graph === 'qwen35'

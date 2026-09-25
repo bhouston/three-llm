@@ -96,9 +96,10 @@ class GPT2Tokenizer implements Tokenizer {
     }
 
     const merges = model.merges.map((merge) => (Array.isArray(merge) ? merge.join(' ') : merge));
-    const normalizers = 'normalizers' in (tokenizerJSON.normalizer || {})
-      ? (tokenizerJSON.normalizer as { normalizers?: Array<{ type?: string }> }).normalizers || []
-      : [tokenizerJSON.normalizer as { type?: string } | undefined];
+    const normalizers =
+      'normalizers' in (tokenizerJSON.normalizer || {})
+        ? (tokenizerJSON.normalizer as { normalizers?: Array<{ type?: string }> }).normalizers || []
+        : [tokenizerJSON.normalizer as { type?: string } | undefined];
     const hasNfc = normalizers.some((normalizer) => normalizer?.type === 'NFC');
 
     return new GPT2Tokenizer(model.vocab, merges, {
@@ -209,8 +210,7 @@ class GPT2Tokenizer implements Tokenizer {
 const GPT2_TOKEN_PATTERN = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
 const QWEN_TOKEN_PATTERN =
   /(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+/gu;
-const SMOLLM_TOKEN_PATTERN =
-  /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
+const SMOLLM_TOKEN_PATTERN = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
 const LLAMA3_TOKEN_PATTERN =
   /(?i:'s|'t|'re|'ve|'m|'ll|'d)| ?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+/gu;
 

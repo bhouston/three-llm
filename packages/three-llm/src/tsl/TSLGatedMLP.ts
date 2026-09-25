@@ -5,7 +5,7 @@ import { TSLSiLUMul } from './TSLSiLUMul.js';
 import type { KernelOptions, Renderer, TslNode } from '../types.js';
 
 interface GatedMLPOptions extends KernelOptions {
-	activation?: string;
+  activation?: string;
 }
 
 /**
@@ -15,82 +15,78 @@ interface GatedMLPOptions extends KernelOptions {
  *
  */
 class TSLGatedMLP {
+  gate: TSLLinear;
+  up: TSLLinear;
+  activatedGate?: TSLGELU;
+  hidden: TSLMul | TSLSiLUMul;
+  _geluThenMul: boolean;
+  down: TSLLinear;
+  outputNode: TslNode;
+  computeNodes: TslNode[];
 
-	gate: TSLLinear;
-	up: TSLLinear;
-	activatedGate?: TSLGELU;
-	hidden: TSLMul | TSLSiLUMul;
-	_geluThenMul: boolean;
-	down: TSLLinear;
-	outputNode: TslNode;
-	computeNodes: TslNode[];
+  constructor(
+    inputNode: TslNode,
+    gateWeight: Float32Array,
+    upWeight: Float32Array,
+    downWeight: Float32Array,
+    hiddenSize: number,
+    innerSize: number,
+    options: GatedMLPOptions = {},
+  ) {
+    this.gate = new TSLLinear(inputNode, gateWeight, null, hiddenSize, innerSize, {
+      name: options.name ? `${options.name}Gate` : 'LLMMLPGate',
+      workgroupSize: options.workgroupSize,
+    });
+    this.up = new TSLLinear(inputNode, upWeight, null, hiddenSize, innerSize, {
+      name: options.name ? `${options.name}Up` : 'LLMMLPUp',
+      workgroupSize: options.workgroupSize,
+    });
 
-	constructor( inputNode: TslNode, gateWeight: Float32Array, upWeight: Float32Array, downWeight: Float32Array, hiddenSize: number, innerSize: number, options: GatedMLPOptions = {} ) {
+    if (options.activation === 'gelu_new' || options.activation === 'gelu_pytorch_tanh') {
+      this.activatedGate = new TSLGELU(this.gate.outputNode, innerSize, {
+        name: options.name ? `${options.name}GELU` : 'LLMMLPGELU',
+        workgroupSize: options.workgroupSize,
+      });
+      this.hidden = new TSLMul(this.activatedGate.outputNode, this.up.outputNode, innerSize, {
+        name: options.name ? `${options.name}Mul` : 'LLMMLPMul',
+        workgroupSize: options.workgroupSize,
+      });
+      this._geluThenMul = true;
+    } else {
+      this.hidden = new TSLSiLUMul(this.gate.outputNode, this.up.outputNode, innerSize, {
+        name: options.name ? `${options.name}SiLUMul` : 'LLMMLPSiLUMul',
+        workgroupSize: options.workgroupSize,
+      });
+      this._geluThenMul = false;
+    }
 
-		this.gate = new TSLLinear( inputNode, gateWeight, null, hiddenSize, innerSize, {
-			name: options.name ? `${ options.name }Gate` : 'LLMMLPGate',
-			workgroupSize: options.workgroupSize
-		} );
-		this.up = new TSLLinear( inputNode, upWeight, null, hiddenSize, innerSize, {
-			name: options.name ? `${ options.name }Up` : 'LLMMLPUp',
-			workgroupSize: options.workgroupSize
-		} );
+    this.down = new TSLLinear(this.hidden.outputNode, downWeight, null, innerSize, hiddenSize, {
+      name: options.name ? `${options.name}Down` : 'LLMMLPDown',
+      workgroupSize: options.workgroupSize,
+    });
+    this.outputNode = this.down.outputNode;
+    this.computeNodes = [
+      this.gate.computeNode,
+      this.up.computeNode,
+      ...(this._geluThenMul ? [this.activatedGate!.computeNode] : []),
+      this.hidden.computeNode,
+      this.down.computeNode,
+    ];
+  }
 
-		if ( options.activation === 'gelu_new' || options.activation === 'gelu_pytorch_tanh' ) {
+  compute(renderer: Renderer) {
+    this.gate.compute(renderer);
+    this.up.compute(renderer);
 
-			this.activatedGate = new TSLGELU( this.gate.outputNode, innerSize, {
-				name: options.name ? `${ options.name }GELU` : 'LLMMLPGELU',
-				workgroupSize: options.workgroupSize
-			} );
-			this.hidden = new TSLMul( this.activatedGate.outputNode, this.up.outputNode, innerSize, {
-				name: options.name ? `${ options.name }Mul` : 'LLMMLPMul',
-				workgroupSize: options.workgroupSize
-			} );
-			this._geluThenMul = true;
+    if (this._geluThenMul) {
+      this.activatedGate!.compute(renderer);
+    }
 
-		} else {
+    this.hidden.compute(renderer);
+    this.down.compute(renderer);
 
-			this.hidden = new TSLSiLUMul( this.gate.outputNode, this.up.outputNode, innerSize, {
-				name: options.name ? `${ options.name }SiLUMul` : 'LLMMLPSiLUMul',
-				workgroupSize: options.workgroupSize
-			} );
-			this._geluThenMul = false;
-
-		}
-
-		this.down = new TSLLinear( this.hidden.outputNode, downWeight, null, innerSize, hiddenSize, {
-			name: options.name ? `${ options.name }Down` : 'LLMMLPDown',
-			workgroupSize: options.workgroupSize
-		} );
-		this.outputNode = this.down.outputNode;
-		this.computeNodes = [
-			this.gate.computeNode,
-			this.up.computeNode,
-			...( this._geluThenMul ? [ this.activatedGate!.computeNode ] : [] ),
-			this.hidden.computeNode,
-			this.down.computeNode
-		];
-
-	}
-
-	compute( renderer: Renderer ) {
-
-		this.gate.compute( renderer );
-		this.up.compute( renderer );
-
-		if ( this._geluThenMul ) {
-
-			this.activatedGate!.compute( renderer );
-
-		}
-
-		this.hidden.compute( renderer );
-		this.down.compute( renderer );
-
-		return this.outputNode;
-
-	}
-
+    return this.outputNode;
+  }
 }
 
 export { TSLGatedMLP };
