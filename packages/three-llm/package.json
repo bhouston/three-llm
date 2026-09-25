@@ -26,8 +26,7 @@
     "directory": "packages/three-llm"
   },
   "files": [
-    "dist",
-    "CHANGELOG.md"
+    "dist"
   ],
   "type": "module",
   "sideEffects": false,
