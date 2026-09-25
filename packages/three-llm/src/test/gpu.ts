@@ -1,6 +1,6 @@
 import { StorageBufferAttribute, WebGPURenderer } from 'three/webgpu';
 import { storage } from 'three/tsl';
-import { expect } from 'vitest';
+import { afterAll, expect } from 'vitest';
 
 import { closeArray } from './helpers.js';
 import { causalAttention, softmax } from '../runtime/math.js';
@@ -15,7 +15,7 @@ export function storageFromArray(array: Float32Array) {
   };
 }
 
-export async function createRenderer(skip: () => never): Promise<WebGPURenderer> {
+async function initRenderer(skip: () => never): Promise<WebGPURenderer> {
   const gpu = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { gpu?: any }).gpu;
   if (!gpu) {
     skip();
@@ -36,6 +36,23 @@ export async function createRenderer(skip: () => never): Promise<WebGPURenderer>
   }
 
   return renderer;
+}
+
+// Dawn/lavapipe device + shader-pipeline init is slow under software rendering, so this is
+// reused across every test in a file instead of being recreated (and disposed) per test.
+let rendererPromise: Promise<WebGPURenderer> | undefined;
+
+afterAll(async () => {
+  const renderer = await rendererPromise?.catch(() => undefined);
+  renderer?.dispose();
+});
+
+export async function createRenderer(skip: () => never): Promise<WebGPURenderer> {
+  rendererPromise ??= initRenderer(skip).catch((error) => {
+    rendererPromise = undefined;
+    throw error;
+  });
+  return rendererPromise;
 }
 
 export async function readOutput(renderer: Renderer, layer: { outputAttribute: StorageBufferAttribute }) {

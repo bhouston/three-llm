@@ -196,70 +196,66 @@ export function gpuTest(
 ) {
   it(name, async ({ skip }) => {
     const renderer = await createRenderer(skip);
-    try {
-      const nodes: AssertWriteNode[] = [];
-      const totalRows = maxAssertions * MAX_COLUMNS;
-      const actualBuffer = instancedArray(totalRows, 'vec4');
-      const expectedBuffer = instancedArray(totalRows, 'vec4');
-      const canaryRow = totalRows - 1;
-      const maxUsableAssertions = maxAssertions - 1;
-      const canaryValue = randomCanaryValue();
+    const nodes: AssertWriteNode[] = [];
+    const totalRows = maxAssertions * MAX_COLUMNS;
+    const actualBuffer = instancedArray(totalRows, 'vec4');
+    const expectedBuffer = instancedArray(totalRows, 'vec4');
+    const canaryRow = totalRows - 1;
+    const maxUsableAssertions = maxAssertions - 1;
+    const canaryValue = randomCanaryValue();
 
-      const kernel = Fn(() => {
-        nodes.length = 0;
-        writeCanary(actualBuffer, canaryRow, canaryValue);
+    const kernel = Fn(() => {
+      nodes.length = 0;
+      writeCanary(actualBuffer, canaryRow, canaryValue);
 
-        const makeNode = (kind: KindValue, tolerance: number, message?: string) => (value1: any, value2: any) => {
-          if (nodes.length >= maxUsableAssertions) {
-            throw new Error(`gpuTest "${name}": exceeded maxAssertions (${maxAssertions}).`);
-          }
-
-          const baseRow = nodes.length * MAX_COLUMNS;
-          const writeColumn = (c: number, actualVec4: any, expectedVec4: any) => {
-            If(instanceIndex.equal(baseRow + c), () => {
-              actualBuffer.element(instanceIndex).assign(actualVec4);
-              expectedBuffer.element(instanceIndex).assign(expectedVec4);
-            });
-          };
-          const node = new AssertWriteNode(writeColumn, value1, value2);
-          node.kind = kind;
-          node.tolerance = tolerance;
-          node.message = message;
-          node.baseRow = baseRow;
-          nodes.push(node);
-          Stack(node);
-        };
-
-        buildFn({ assert: buildAssertAPI(makeNode) });
-      })().compute(totalRows);
-
-      await renderer.computeAsync(kernel);
-
-      const actualData = await readBuffer(renderer, actualBuffer);
-      const expectedData = await readBuffer(renderer, expectedBuffer);
-      assertKernelRan(actualData, canaryRow, canaryValue, name);
-
-      nodes.forEach((node, id) => {
-        const actual: number[] = [];
-        const expected: number[] = [];
-
-        for (let c = 0; c < node.resolvedColumns; c++) {
-          const base = (node.baseRow + c) * 4;
-          actual.push(...actualData.slice(base, base + node.resolvedColumnLength));
-          expected.push(...expectedData.slice(base, base + node.resolvedColumnLength));
+      const makeNode = (kind: KindValue, tolerance: number, message?: string) => (value1: any, value2: any) => {
+        if (nodes.length >= maxUsableAssertions) {
+          throw new Error(`gpuTest "${name}": exceeded maxAssertions (${maxAssertions}).`);
         }
 
-        evaluateAssertion(actual, expected, {
-          label: node.message || `${name} #${id}`,
-          kind: node.kind,
-          tolerance: node.tolerance,
-          columns: node.resolvedColumns,
-          columnLength: node.resolvedColumnLength,
-        });
+        const baseRow = nodes.length * MAX_COLUMNS;
+        const writeColumn = (c: number, actualVec4: any, expectedVec4: any) => {
+          If(instanceIndex.equal(baseRow + c), () => {
+            actualBuffer.element(instanceIndex).assign(actualVec4);
+            expectedBuffer.element(instanceIndex).assign(expectedVec4);
+          });
+        };
+        const node = new AssertWriteNode(writeColumn, value1, value2);
+        node.kind = kind;
+        node.tolerance = tolerance;
+        node.message = message;
+        node.baseRow = baseRow;
+        nodes.push(node);
+        Stack(node);
+      };
+
+      buildFn({ assert: buildAssertAPI(makeNode) });
+    })().compute(totalRows);
+
+    await renderer.computeAsync(kernel);
+
+    const actualData = await readBuffer(renderer, actualBuffer);
+    const expectedData = await readBuffer(renderer, expectedBuffer);
+    assertKernelRan(actualData, canaryRow, canaryValue, name);
+
+    nodes.forEach((node, id) => {
+      const actual: number[] = [];
+      const expected: number[] = [];
+
+      for (let c = 0; c < node.resolvedColumns; c++) {
+        const base = (node.baseRow + c) * 4;
+        actual.push(...actualData.slice(base, base + node.resolvedColumnLength));
+        expected.push(...expectedData.slice(base, base + node.resolvedColumnLength));
+      }
+
+      evaluateAssertion(actual, expected, {
+        label: node.message || `${name} #${id}`,
+        kind: node.kind,
+        tolerance: node.tolerance,
+        columns: node.resolvedColumns,
+        columnLength: node.resolvedColumnLength,
       });
-    } finally {
-      renderer.dispose();
-    }
+    });
   });
 }
 
@@ -271,94 +267,90 @@ export function gpuFuzzTest(
 ) {
   it(name, async ({ skip }) => {
     const renderer = await createRenderer(skip);
-    try {
-      const nodes: AssertWriteNode[] = [];
-      const actualBuffers: any[][] = [];
-      const expectedBuffers: any[][] = [];
-      const canaryRow = count - 1;
-      const maxUsableCount = count - 1;
-      const canaryValue = randomCanaryValue();
+    const nodes: AssertWriteNode[] = [];
+    const actualBuffers: any[][] = [];
+    const expectedBuffers: any[][] = [];
+    const canaryRow = count - 1;
+    const maxUsableCount = count - 1;
+    const canaryValue = randomCanaryValue();
 
-      for (let site = 0; site < maxSitesPerInstance; site++) {
-        actualBuffers.push(Array.from({ length: maxColumnsPerSite }, () => instancedArray(count, 'vec4')));
-        expectedBuffers.push(Array.from({ length: maxColumnsPerSite }, () => instancedArray(count, 'vec4')));
-      }
+    for (let site = 0; site < maxSitesPerInstance; site++) {
+      actualBuffers.push(Array.from({ length: maxColumnsPerSite }, () => instancedArray(count, 'vec4')));
+      expectedBuffers.push(Array.from({ length: maxColumnsPerSite }, () => instancedArray(count, 'vec4')));
+    }
 
-      const kernel = Fn(() => {
-        writeCanary(actualBuffers[0]![0], canaryRow, canaryValue);
+    const kernel = Fn(() => {
+      writeCanary(actualBuffers[0]![0], canaryRow, canaryValue);
 
-        const makeNode = (kind: KindValue, tolerance: number, message?: string) => (value1: any, value2: any) => {
-          const site = nodes.length;
-          if (site >= maxSitesPerInstance) {
-            throw new Error(`gpuFuzzTest "${name}": exceeded maxSitesPerInstance (${maxSitesPerInstance}).`);
+      const makeNode = (kind: KindValue, tolerance: number, message?: string) => (value1: any, value2: any) => {
+        const site = nodes.length;
+        if (site >= maxSitesPerInstance) {
+          throw new Error(`gpuFuzzTest "${name}": exceeded maxSitesPerInstance (${maxSitesPerInstance}).`);
+        }
+
+        const writeColumn = (c: number, actualVec4: any, expectedVec4: any) => {
+          if (c >= maxColumnsPerSite) {
+            throw new Error(
+              `gpuFuzzTest "${name}": value at site ${site} needs more than ${maxColumnsPerSite} columns.`,
+            );
           }
 
-          const writeColumn = (c: number, actualVec4: any, expectedVec4: any) => {
-            if (c >= maxColumnsPerSite) {
-              throw new Error(
-                `gpuFuzzTest "${name}": value at site ${site} needs more than ${maxColumnsPerSite} columns.`,
-              );
-            }
-
-            actualBuffers[site]![c]!.element(instanceIndex).assign(actualVec4);
-            expectedBuffers[site]![c]!.element(instanceIndex).assign(expectedVec4);
-          };
-          const node = new AssertWriteNode(writeColumn, value1, value2);
-          node.kind = kind;
-          node.tolerance = tolerance;
-          node.message = message;
-          node.site = site;
-          nodes.push(node);
-          Stack(node);
+          actualBuffers[site]![c]!.element(instanceIndex).assign(actualVec4);
+          expectedBuffers[site]![c]!.element(instanceIndex).assign(expectedVec4);
         };
+        const node = new AssertWriteNode(writeColumn, value1, value2);
+        node.kind = kind;
+        node.tolerance = tolerance;
+        node.message = message;
+        node.site = site;
+        nodes.push(node);
+        Stack(node);
+      };
 
-        If(instanceIndex.lessThan(maxUsableCount), () => {
-          nodes.length = 0;
-          buildFn({ instanceIndex, assert: buildAssertAPI(makeNode) });
-        });
-      })().compute(count);
+      If(instanceIndex.lessThan(maxUsableCount), () => {
+        nodes.length = 0;
+        buildFn({ instanceIndex, assert: buildAssertAPI(makeNode) });
+      });
+    })().compute(count);
 
-      await renderer.computeAsync(kernel);
+    await renderer.computeAsync(kernel);
 
-      const actualData: Float32Array[][] = [];
-      const expectedData: Float32Array[][] = [];
-      actualData[0] = await Promise.all(actualBuffers[0]!.map((buffer) => readBuffer(renderer, buffer)));
-      expectedData[0] = await Promise.all(expectedBuffers[0]!.map((buffer) => readBuffer(renderer, buffer)));
-      assertKernelRan(actualData[0]![0]!, canaryRow, canaryValue, name, 'gpuFuzzTest');
+    const actualData: Float32Array[][] = [];
+    const expectedData: Float32Array[][] = [];
+    actualData[0] = await Promise.all(actualBuffers[0]!.map((buffer) => readBuffer(renderer, buffer)));
+    expectedData[0] = await Promise.all(expectedBuffers[0]!.map((buffer) => readBuffer(renderer, buffer)));
+    assertKernelRan(actualData[0]![0]!, canaryRow, canaryValue, name, 'gpuFuzzTest');
 
+    for (const node of nodes) {
+      if (actualData[node.site] === undefined) {
+        actualData[node.site] = await Promise.all(
+          actualBuffers[node.site]!.map((buffer) => readBuffer(renderer, buffer)),
+        );
+        expectedData[node.site] = await Promise.all(
+          expectedBuffers[node.site]!.map((buffer) => readBuffer(renderer, buffer)),
+        );
+      }
+    }
+
+    for (let instance = 0; instance < maxUsableCount; instance++) {
       for (const node of nodes) {
-        if (actualData[node.site] === undefined) {
-          actualData[node.site] = await Promise.all(
-            actualBuffers[node.site]!.map((buffer) => readBuffer(renderer, buffer)),
-          );
-          expectedData[node.site] = await Promise.all(
-            expectedBuffers[node.site]!.map((buffer) => readBuffer(renderer, buffer)),
-          );
+        const actual: number[] = [];
+        const expected: number[] = [];
+
+        for (let c = 0; c < node.resolvedColumns; c++) {
+          const base = instance * 4;
+          actual.push(...actualData[node.site]![c]!.slice(base, base + node.resolvedColumnLength));
+          expected.push(...expectedData[node.site]![c]!.slice(base, base + node.resolvedColumnLength));
         }
+
+        evaluateAssertion(actual, expected, {
+          label: node.message ? `${name} #${instance}: ${node.message}` : `${name} #${instance}`,
+          kind: node.kind,
+          tolerance: node.tolerance,
+          columns: node.resolvedColumns,
+          columnLength: node.resolvedColumnLength,
+        });
       }
-
-      for (let instance = 0; instance < maxUsableCount; instance++) {
-        for (const node of nodes) {
-          const actual: number[] = [];
-          const expected: number[] = [];
-
-          for (let c = 0; c < node.resolvedColumns; c++) {
-            const base = instance * 4;
-            actual.push(...actualData[node.site]![c]!.slice(base, base + node.resolvedColumnLength));
-            expected.push(...expectedData[node.site]![c]!.slice(base, base + node.resolvedColumnLength));
-          }
-
-          evaluateAssertion(actual, expected, {
-            label: node.message ? `${name} #${instance}: ${node.message}` : `${name} #${instance}`,
-            kind: node.kind,
-            tolerance: node.tolerance,
-            columns: node.resolvedColumns,
-            columnLength: node.resolvedColumnLength,
-          });
-        }
-      }
-    } finally {
-      renderer.dispose();
     }
   });
 }

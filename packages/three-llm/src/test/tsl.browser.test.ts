@@ -27,11 +27,7 @@ import { assertAttentionSequence, assertCausalSequence, createRenderer, readOutp
 
 async function withRenderer(skip: () => never, run: (renderer: WebGPURenderer) => Promise<void> | void) {
   const renderer = await createRenderer(skip);
-  try {
-    await run(renderer);
-  } finally {
-    renderer.dispose();
-  }
+  await run(renderer);
 }
 
 function mapGelu(values: Float32Array) {
