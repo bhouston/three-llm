@@ -5,6 +5,7 @@ allowBuilds:
   '@parcel/watcher': false
   '@sentry/cli': true
   esbuild: true
+  webgpu: true
 
 link-workspace-packages: true
 

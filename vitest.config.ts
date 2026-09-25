@@ -82,6 +82,13 @@ export default defineConfig({
       },
       {
         test: {
+          name: 'library-webgpu-node-spike',
+          include: ['packages/three-llm/src/test/tsl.browser.test.ts'],
+          environment: 'webgpu-node',
+        },
+      },
+      {
+        test: {
           name: 'checkpoints',
           include: ['packages/three-llm/src/**/*.checkpoint.test.ts'],
           exclude: ['**/*.browser.test.ts'],

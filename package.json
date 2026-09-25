@@ -48,7 +48,8 @@
     "size-limit": "^14.0.0",
     "typescript": "^7",
     "vite": "^8.1.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vitest-environment-webgpu-node": "^2.0.0"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs}": [
