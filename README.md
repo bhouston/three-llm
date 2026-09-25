@@ -43,7 +43,10 @@ pnpm test           # run type checks and unit tests
 pnpm test:e2e       # run Playwright tests
 pnpm lint           # check source with Oxlint
 pnpm format         # format the repository with Oxfmt
+pnpm size           # check the compiled bundle against the size budget
 ```
+
+Coverage and bundle-size gates, Codecov setup, and the release process live in [RELEASING.md](RELEASING.md).
 
 ## License
 
@@ -51,4 +54,4 @@ pnpm format         # format the repository with Oxfmt
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the issue, branch, PR, and release workflow and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the issue, branch, PR, and release workflow, [RELEASING.md](RELEASING.md) for release-specific gates and maintainer setup, and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
