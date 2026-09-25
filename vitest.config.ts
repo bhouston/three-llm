@@ -29,6 +29,9 @@ export default defineConfig({
           include: ['packages/three-llm/src/**/*.browser.test.ts'],
           exclude: ['**/*.checkpoint.browser.test.ts'],
           environment: 'webgpu-node',
+          // Cold Dawn/lavapipe device + shader-pipeline init on GPU-less CI runners can exceed
+          // the default 5000ms, even though the renderer itself is now reused across a file.
+          testTimeout: 30_000,
         },
       },
       {
