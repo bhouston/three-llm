@@ -15,8 +15,13 @@ export function storageFromArray(array: Float32Array) {
   };
 }
 
+/** @webgpu/types isn't a dependency; only requestAdapter is used here. */
+interface MinimalGPU {
+  requestAdapter: () => Promise<unknown>;
+}
+
 async function initRenderer(skip: () => never): Promise<WebGPURenderer> {
-  const gpu = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { gpu?: any }).gpu;
+  const gpu = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { gpu?: MinimalGPU }).gpu;
   if (!gpu) {
     skip();
   }

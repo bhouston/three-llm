@@ -1,8 +1,10 @@
 import type { StorageBufferAttribute, WebGPURenderer } from 'three/webgpu';
 
 /** Three.js TSL node graphs are not fully typed for compute kernels. */
+// oxlint-disable-next-line typescript/no-explicit-any -- three/tsl ships no public node types; every arithmetic/swizzle call site would need an unsafe cast if this were `unknown`.
 export type TslNode = any;
 
+// oxlint-disable-next-line typescript/no-explicit-any -- same upstream typing gap as TslNode.
 export type ComputeNode = any;
 
 export type ProgressCallback = (message: string) => void;

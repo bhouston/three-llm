@@ -2,6 +2,7 @@ import { exp, float, hash, inversesqrt, tanh, vec2, vec3, vec4 } from 'three/tsl
 
 import { geluNew, layerNorm, linear, rmsNorm, silu, softmax } from '../runtime/math.js';
 import { gpuFuzzTest, gpuTest } from './gpu-test-utils.js';
+import type { TslNode } from '../types.js';
 
 const SWIZZLE = ['x', 'y', 'z', 'w'] as const;
 
@@ -13,30 +14,30 @@ function tslVec(values: ArrayLike<number>) {
   return vec4(values[0]!, values[1]!, values[2]!, values[3]!);
 }
 
-function tslSum(value: any, count: number) {
+function tslSum(value: TslNode, count: number) {
   let sum = value.x;
   for (let i = 1; i < count; i++) sum = sum.add(value[SWIZZLE[i]!]);
   return sum;
 }
 
-function tslMaxComponent(value: any, count: number) {
+function tslMaxComponent(value: TslNode, count: number) {
   let maxValue = value.x;
   for (let i = 1; i < count; i++) maxValue = maxValue.max(value[SWIZZLE[i]!]);
   return maxValue;
 }
 
-function tslGeluNew(x: any) {
+function tslGeluNew(x: TslNode) {
   const cubic = x.mul(x).mul(x).mul(0.044715).add(x);
   const inner = cubic.mul(Math.sqrt(2 / Math.PI));
   return x.mul(0.5).mul(tanh(inner).add(float(1)));
 }
 
-function tslSoftmax(values: any, count: number) {
+function tslSoftmax(values: TslNode, count: number) {
   const shifted = exp(values.sub(tslMaxComponent(values, count)));
   return shifted.div(tslSum(shifted, count));
 }
 
-function tslLayerNorm(input: any, weight: any, bias: any, count: number, epsilon = 1e-5) {
+function tslLayerNorm(input: TslNode, weight: TslNode, bias: TslNode, count: number, epsilon = 1e-5) {
   const mean = tslSum(input, count).div(count);
   const delta = input.sub(mean);
   const variance = tslSum(delta.mul(delta), count).div(count);
@@ -46,16 +47,16 @@ function tslLayerNorm(input: any, weight: any, bias: any, count: number, epsilon
     .add(bias);
 }
 
-function tslSilu(x: any) {
+function tslSilu(x: TslNode) {
   return x.div(float(1).add(exp(x.negate())));
 }
 
-function tslRmsNorm(input: any, weight: any, count: number, epsilon = 1e-5) {
+function tslRmsNorm(input: TslNode, weight: TslNode, count: number, epsilon = 1e-5) {
   const invRms = inversesqrt(tslSum(input.mul(input), count).div(count).add(epsilon));
   return input.mul(invRms).mul(weight);
 }
 
-function tslLinear(input: any, inputSize: number, rows: any[], bias: any) {
+function tslLinear(input: TslNode, inputSize: number, rows: TslNode[], bias: TslNode) {
   let sum = bias;
   for (let i = 0; i < inputSize; i++) sum = sum.add(rows[i].mul(input[SWIZZLE[i]!]));
   return sum;

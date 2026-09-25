@@ -10,7 +10,7 @@
     "eslint/no-underscore-dangle": "off",
     "eslint/no-unused-private-class-members": "error",
     "react/react-in-jsx-scope": "off",
-    "typescript/no-explicit-any": "off",
+    "typescript/no-explicit-any": "error",
     "unicorn/no-new-array": "error"
   },
   "overrides": [
