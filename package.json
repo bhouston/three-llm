@@ -31,7 +31,6 @@
     "@commitlint/cli": "^21.2.2",
     "@commitlint/config-conventional": "^21.2.2",
     "@playwright/test": "^1.61.1",
-    "@semantic-release/changelog": "^7.0.0",
     "@size-limit/file": "^14.0.0",
     "@types/node": "^22.20.0",
     "@visulima/yaml": "1.0.0",
