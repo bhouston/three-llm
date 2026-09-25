@@ -10,5 +10,5 @@ allowBuilds:
 link-workspace-packages: true
 
 minimumReleaseAgeExclude:
-  - vitest-environment-webgpu-node@2.0.0
-  - tanstack-router-ga4@1.6.0
+  - vitest-environment-webgpu-node
+  - tanstack-router-ga4
