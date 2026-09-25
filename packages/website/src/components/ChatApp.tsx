@@ -547,9 +547,7 @@ export function ChatApp({ modelId, onModelChange }: { modelId?: string; onModelC
                               <span className="flex items-center gap-2">
                                 <span className={WEIGHT_TEXT_CLASS[weightClass]}>{entry.name}</span>
                                 <span className="text-muted-foreground">{entry.sizeHint}</span>
-                                {badge ? (
-                                  <Badge variant={desktopOnly ? 'outline' : 'secondary'}>{badge}</Badge>
-                                ) : null}
+                                {badge ? <Badge variant={desktopOnly ? 'outline' : 'secondary'}>{badge}</Badge> : null}
                               </span>
                             </SelectItem>
                           );

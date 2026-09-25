@@ -1,6 +1,14 @@
 import { GPT2Tokenizer, LLAMA3_TOKEN_PATTERN, QWEN_TOKEN_PATTERN, SMOLLM_TOKEN_PATTERN } from './GPT2Tokenizer.js';
 import { architectureFor, recipeFor } from './DecoderRecipe.js';
-import { convertAllTensors, createProgress, detectLanguagePrefix, fetchJSON, isEmbeddingTensorName, isolateEmbeddingTensors, unwrapTextConfig } from './tensors.js';
+import {
+  convertAllTensors,
+  createProgress,
+  detectLanguagePrefix,
+  fetchJSON,
+  isEmbeddingTensorName,
+  isolateEmbeddingTensors,
+  unwrapTextConfig,
+} from './tensors.js';
 import { loadSafetensorsModel } from './SafeTensorsLoader.js';
 import { UnigramTokenizer } from './UnigramTokenizer.js';
 import type {
@@ -77,10 +85,7 @@ async function loadTokenizer(
         : recipe.tokenizer === 'llama3'
           ? LLAMA3_TOKEN_PATTERN
           : undefined;
-  const endOfTextToken =
-    recipe.tokenizer === 'llama3'
-      ? '<|end_of_text|>'
-      : '<|endoftext|>';
+  const endOfTextToken = recipe.tokenizer === 'llama3' ? '<|end_of_text|>' : '<|endoftext|>';
   const tokenizerOptions = {
     tokenPattern,
     endOfTextToken,
