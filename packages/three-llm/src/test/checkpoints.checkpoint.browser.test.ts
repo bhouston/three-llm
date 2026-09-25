@@ -19,11 +19,7 @@ import { createRenderer } from './gpu.js';
 
 async function withRenderer(skip: () => never, run: (renderer: WebGPURenderer) => Promise<void> | void) {
   const renderer = await createRenderer(skip);
-  try {
-    await run(renderer);
-  } finally {
-    renderer.dispose();
-  }
+  await run(renderer);
 }
 
 async function expectDecoderGpuMatchesCpu(
