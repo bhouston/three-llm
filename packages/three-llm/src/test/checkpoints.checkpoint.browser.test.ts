@@ -33,7 +33,7 @@ async function expectDecoderGpuMatchesCpu(
   maxTokens = 32,
   timeoutOptions = GREEDY,
 ) {
-  const weights = await loadLocalCheckpoint(skip, DecoderWeights, checkpointRoot(catalogEntry(id), 'browser'));
+  const weights = await loadLocalCheckpoint(skip, DecoderWeights, checkpointRoot(catalogEntry(id), 'node'));
   const cpu = new DecoderCPURunner(weights, { maxTokens }).generate(STORY_PROMPT, timeoutOptions);
   const gpu = await new DecoderTSLRunner(weights, { maxTokens }).generate(renderer, STORY_PROMPT, timeoutOptions);
 
@@ -57,7 +57,7 @@ describe('checkpoint browser GPU tests', () => {
 
   // Phi-1.5 (2.8 GB) and Qwen3.5 0.8B (1.7 GB) are too large to reliably download within
   // CI time budgets; no smaller checkpoint exists for either architecture. Run locally only.
-  it.skipIf(import.meta.env.CI)(
+  it.skipIf(process.env.CI)(
     'TSL Phi-1.5 greedy continuation matches the CPU runner',
     async ({ skip }) => {
       await withRenderer(skip, (renderer) => expectDecoderGpuMatchesCpu(skip, renderer, 'phi-1.5', 32));
@@ -65,14 +65,14 @@ describe('checkpoint browser GPU tests', () => {
     300_000,
   );
 
-  it.skipIf(import.meta.env.CI)(
+  it.skipIf(process.env.CI)(
     'TSL Qwen3.5 0.8B greedy continuation matches the CPU runner',
     async ({ skip }) => {
       await withRenderer(skip, async (renderer) => {
         const weights = await loadLocalCheckpoint(
           skip,
           QwenWeights,
-          checkpointRoot(catalogEntry('qwen3.5-0.8b'), 'browser'),
+          checkpointRoot(catalogEntry('qwen3.5-0.8b'), 'node'),
         );
         const cpu = new QwenCPURunner(weights, { maxTokens: 32 }).generate(STORY_PROMPT, GREEDY_SHORT);
         const gpu = await new QwenTSLRunner(weights, { maxTokens: 32 }).generate(renderer, STORY_PROMPT, GREEDY_SHORT);
